@@ -2,21 +2,50 @@
 //  PageThumbnailView.swift
 //  Notes
 //
-//  Responsibility: Compact A4 portrait thumbnail previewing a page's effective paper style and page number in the sidebar list.
-//  Dependencies: SwiftUI, Domain (PaperType), DesignSystem (Theme), PaperBackgroundView.
+//  Responsibility: Compact A4 portrait thumbnail previewing a page's effective paper style, live ink strokes (`PKDrawing`), and page number in the sidebar list.
+//  Dependencies: SwiftUI, PencilKit, Domain (PaperType, PageGeometry), DesignSystem (Theme), PaperBackgroundView.
 //
 
+import PencilKit
 import SwiftUI
 
 public struct PageThumbnailView: View {
     public let paperType: PaperType
+    public let drawingData: Data?
     public let pageNumber: Int
     public let isSelected: Bool
 
-    public init(paperType: PaperType, pageNumber: Int, isSelected: Bool) {
+    @Environment(\.displayScale) private var displayScale
+    @Environment(\.colorScheme) private var colorScheme
+
+    public init(
+        paperType: PaperType,
+        drawingData: Data? = nil,
+        pageNumber: Int,
+        isSelected: Bool
+    ) {
         self.paperType = paperType
+        self.drawingData = drawingData
         self.pageNumber = pageNumber
         self.isSelected = isSelected
+    }
+
+    private var renderedInkImage: UIImage? {
+        guard let drawingData,
+              !drawingData.isEmpty,
+              let drawing = try? PKDrawing(data: drawingData),
+              !drawing.strokes.isEmpty else {
+            return nil
+        }
+        let traits = UITraitCollection(userInterfaceStyle: colorScheme == .dark ? .dark : .light)
+        var image: UIImage?
+        traits.performAsCurrent {
+            image = drawing.image(
+                from: CGRect(origin: .zero, size: PageGeometry.a4Size),
+                scale: max(displayScale, 1.0) * (Theme.Thumbnail.width / PageGeometry.a4Width)
+            )
+        }
+        return image
     }
 
     public var body: some View {
@@ -26,6 +55,13 @@ public struct PageThumbnailView: View {
                 lineSpacing: Theme.Thumbnail.lineSpacing,
                 showMarginLine: false
             )
+
+            if let inkImage = renderedInkImage {
+                Image(uiImage: inkImage)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+            }
 
             Text("\(pageNumber)")
                 .font(Theme.Fonts.badge)

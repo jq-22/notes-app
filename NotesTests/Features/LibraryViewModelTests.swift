@@ -121,4 +121,27 @@ struct LibraryViewModelTests {
         vm.clearError()
         #expect(vm.activeErrorMessage == nil)
     }
+
+    @Test("Debounced drawing autosave flushes on page change and retains pending data if disk write fails")
+    func drawingAutosaveAndFlush() throws {
+        let store = InMemoryPageStore()
+        let vm = LibraryViewModel(store: store, autosaveDebounceNanoseconds: 500_000_000)
+
+        let notebook = vm.createNotebook(title: "Physics")
+        let sectionID = try #require(vm.selectedSectionID)
+        let page1ID = try #require(vm.selectedPageID)
+        let page2 = try #require(vm.createPage(in: sectionID, notebookID: notebook.id, afterPageID: page1ID, title: "Page 2"))
+
+        vm.selectedPageID = page1ID
+        let sampleDrawing = Data([0x10, 0x20, 0x30, 0x40])
+        vm.scheduleDrawingAutosave(sampleDrawing, for: page1ID)
+
+        // Immediately readable from memory even before debounce timer fires
+        #expect(vm.loadDrawingData(for: page1ID) == sampleDrawing)
+
+        // Switching pages flushes pending drawing to store immediately
+        vm.selectedPageID = page2.id
+        #expect(store.storedDrawings[page1ID] == sampleDrawing)
+        #expect(vm.drawingRevisionByPageID[page1ID] == 1)
+    }
 }

@@ -1,15 +1,17 @@
 //
-//  PageCanvasPlaceholderView.swift
+//  PageEditorView.swift
 //  Notes
 //
-//  Responsibility: Displays the selected A4 portrait page (595 x 842 pt aspect ratio), its paper background layer, and toolbar controls to override the page's paper type or add a page below.
-//  Note: PencilKit ink canvas integration is the next step in Milestone v1a.
-//  Dependencies: SwiftUI, Domain, DesignSystem, LibraryViewModel, PaperBackgroundView.
+//  Responsibility: Hosts `PencilCanvasScrollView` for the selected A4 portrait page and provides toolbar controls for:
+//    - Overriding the page's paper type (lined / squared / blank, or inheriting notebook default)
+//    - Toggling Scribble-to-Erase on or off
+//    - Adding a new page immediately below the current page
+//  Dependencies: SwiftUI, Domain, DesignSystem, LibraryViewModel, PencilCanvasScrollView.
 //
 
 import SwiftUI
 
-public struct PageCanvasPlaceholderView: View {
+public struct PageEditorView: View {
     @Bindable var viewModel: LibraryViewModel
     let notebook: Notebook
     let section: NoteSection
@@ -32,33 +34,29 @@ public struct PageCanvasPlaceholderView: View {
     }
 
     public var body: some View {
-        GeometryReader { geometry in
-            ScrollView([.vertical, .horizontal]) {
-                VStack(spacing: Theme.Spacing.medium) {
-                    PaperBackgroundView(paperType: effectivePaper)
-                        .frame(
-                            width: PageGeometry.a4Width,
-                            height: PageGeometry.a4Height
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.page))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Theme.CornerRadius.page)
-                                .stroke(Theme.Colors.pageBorder, lineWidth: 1)
-                        )
-                        .shadow(color: .black.opacity(0.12), radius: 8, x: 0, y: 4)
-                        .padding(Theme.Spacing.xLarge)
-                }
-                .frame(
-                    minWidth: geometry.size.width,
-                    minHeight: geometry.size.height
-                )
+        PencilCanvasScrollView(
+            pageID: page.id,
+            paperType: effectivePaper,
+            initialDrawingData: viewModel.loadDrawingData(for: page.id),
+            isScribbleToEraseEnabled: viewModel.isScribbleToEraseEnabled,
+            onDrawingChanged: { updatedData in
+                viewModel.scheduleDrawingAutosave(updatedData, for: page.id)
             }
-            .background(Theme.Colors.canvasWorkspaceBackground)
-        }
+        )
+        .ignoresSafeArea(edges: .bottom)
         .navigationTitle(page.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                Toggle(isOn: $viewModel.isScribbleToEraseEnabled) {
+                    Label(
+                        "Scribble to Erase",
+                        systemImage: viewModel.isScribbleToEraseEnabled ? "scribble.variable" : "scribble"
+                    )
+                }
+                .toggleStyle(.button)
+                .help("Toggle Scribble-to-Erase gesture")
+
                 Menu {
                     Picker(
                         "Page Paper",

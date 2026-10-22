@@ -7,7 +7,7 @@
 //    2. Content: Sections & Pages inside the selected notebook (create, rename, reorder, delete with confirmation, page thumbnails)
 //    3. Detail: Selected A4 page view with paper background & page controls.
 //  Also observes scenePhase to flush any pending state when the app backgrounds, and presents save/load errors via alert.
-//  Dependencies: SwiftUI, Domain, DesignSystem, LibraryViewModel, PageThumbnailView, PageCanvasPlaceholderView.
+//  Dependencies: SwiftUI, Domain, DesignSystem, LibraryViewModel, PageThumbnailView, PageEditorView.
 //
 
 import SwiftUI
@@ -326,9 +326,11 @@ public struct LibraryRootView: View {
                 Section {
                     ForEach(Array(section.pages.enumerated()), id: \.element.id) { index, page in
                         let effectivePaper = page.effectivePaperType(notebookDefault: notebook.defaultPaperType)
+                        let _ = viewModel.drawingRevisionByPageID[page.id]
                         HStack(spacing: Theme.Spacing.medium) {
                             PageThumbnailView(
                                 paperType: effectivePaper,
+                                drawingData: viewModel.loadDrawingData(for: page.id),
                                 pageNumber: index + 1,
                                 isSelected: viewModel.selectedPageID == page.id
                             )
@@ -493,7 +495,7 @@ public struct LibraryRootView: View {
         if let notebook = viewModel.selectedNotebook,
            let section = viewModel.selectedSection,
            let page = viewModel.selectedPage {
-            PageCanvasPlaceholderView(
+            PageEditorView(
                 viewModel: viewModel,
                 notebook: notebook,
                 section: section,

@@ -32,13 +32,45 @@ public final class LibraryViewModel {
             }
         }
     }
-    public var selectedPageID: UUID?
+    public var selectedPageID: UUID? {
+        willSet {
+            if selectedPageID != newValue {
+                flushPendingDrawings()
+            }
+        }
+    }
 
     /// Non-nil when a save or load operation fails; bound to a user-visible alert.
     public var activeErrorMessage: String?
 
-    public init(store: PageStore, loadImmediately: Bool = true) {
+    /// User preference for Scribble-to-Erase (persisted in UserDefaults, defaults to true).
+    public var isScribbleToEraseEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(isScribbleToEraseEnabled, forKey: Self.scribbleEnabledDefaultsKey)
+        }
+    }
+
+    /// Monotonically incremented each time a page's drawing data is saved so sidebar thumbnails refresh.
+    public private(set) var drawingRevisionByPageID: [UUID: Int] = [:]
+
+    private var pendingDrawingByPageID: [UUID: Data] = [:]
+    private var debounceSaveTasks: [UUID: Task<Void, Never>] = [:]
+    private let autosaveDebounceNanoseconds: UInt64
+
+    public static let scribbleEnabledDefaultsKey = "Notes.isScribbleToEraseEnabled"
+
+    public init(
+        store: PageStore,
+        loadImmediately: Bool = true,
+        autosaveDebounceNanoseconds: UInt64 = 400_000_000 // 400ms
+    ) {
         self.store = store
+        self.autosaveDebounceNanoseconds = autosaveDebounceNanoseconds
+        if UserDefaults.standard.object(forKey: Self.scribbleEnabledDefaultsKey) == nil {
+            self.isScribbleToEraseEnabled = true
+        } else {
+            self.isScribbleToEraseEnabled = UserDefaults.standard.bool(forKey: Self.scribbleEnabledDefaultsKey)
+        }
         if loadImmediately {
             loadFromStore()
         }
@@ -82,9 +114,66 @@ public final class LibraryViewModel {
     }
 
     public func saveNow() {
+        flushPendingDrawings()
         do {
             try store.saveNotebooks(notebooks)
         } catch {
+            activeErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    // MARK: - Drawing Persistence & Debounced Autosave
+
+    /// Loads the current drawing data for `pageID` (returning any unsaved in-memory buffer first, or loading from `store`).
+    public func loadDrawingData(for pageID: UUID) -> Data? {
+        if let pending = pendingDrawingByPageID[pageID] {
+            return pending
+        }
+        do {
+            return try store.loadDrawingData(for: pageID)
+        } catch {
+            activeErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Schedules a debounced autosave after a stroke completes.
+    public func scheduleDrawingAutosave(_ data: Data, for pageID: UUID) {
+        pendingDrawingByPageID[pageID] = data
+        debounceSaveTasks[pageID]?.cancel()
+
+        let delay = autosaveDebounceNanoseconds
+        debounceSaveTasks[pageID] = Task { @MainActor [weak self] in
+            if delay > 0 {
+                try? await Task.sleep(nanoseconds: delay)
+            }
+            guard !Task.isCancelled else { return }
+            self?.commitPendingDrawing(for: pageID)
+        }
+    }
+
+    /// Immediately writes any pending debounced drawing data to `PageStore` (called on page switch or app backgrounding).
+    public func flushPendingDrawings() {
+        for (_, task) in debounceSaveTasks {
+            task.cancel()
+        }
+        debounceSaveTasks.removeAll()
+
+        let pendingIDs = Array(pendingDrawingByPageID.keys)
+        for pageID in pendingIDs {
+            commitPendingDrawing(for: pageID)
+        }
+    }
+
+    private func commitPendingDrawing(for pageID: UUID) {
+        guard let data = pendingDrawingByPageID.removeValue(forKey: pageID) else { return }
+        debounceSaveTasks.removeValue(forKey: pageID)
+        do {
+            try store.saveDrawingData(data, for: pageID)
+            drawingRevisionByPageID[pageID, default: 0] += 1
+        } catch {
+            // Retain in pending dictionary so a page's strokes are never lost in memory if disk write fails
+            pendingDrawingByPageID[pageID] = data
             activeErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
@@ -149,6 +238,11 @@ public final class LibraryViewModel {
             ensureValidSectionAndPageSelection()
         }
 
+        for pid in pageIDs {
+            debounceSaveTasks[pid]?.cancel()
+            debounceSaveTasks.removeValue(forKey: pid)
+            pendingDrawingByPageID.removeValue(forKey: pid)
+        }
         saveNow()
         do {
             try store.deleteDrawingData(for: pageIDs)
@@ -205,6 +299,11 @@ public final class LibraryViewModel {
             ensureValidSectionAndPageSelection()
         }
 
+        for pid in pageIDs {
+            debounceSaveTasks[pid]?.cancel()
+            debounceSaveTasks.removeValue(forKey: pid)
+            pendingDrawingByPageID.removeValue(forKey: pid)
+        }
         saveNow()
         do {
             try store.deleteDrawingData(for: pageIDs)
@@ -308,6 +407,9 @@ public final class LibraryViewModel {
             ensureValidPageSelection()
         }
 
+        debounceSaveTasks[pageID]?.cancel()
+        debounceSaveTasks.removeValue(forKey: pageID)
+        pendingDrawingByPageID.removeValue(forKey: pageID)
         saveNow()
         do {
             try store.deleteDrawingData(for: [pageID])
