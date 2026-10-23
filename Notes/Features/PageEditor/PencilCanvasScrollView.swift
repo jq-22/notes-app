@@ -39,6 +39,13 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
     public static let maximumZoomScale: CGFloat = 5.0
     public static let rulerScaleFactor: CGFloat = 0.75
 
+    /// Minimum horizontal finger drag distance (in points) beyond the edge (or across the page) required to trigger a page turn.
+    public static let pageTurnRequiredDragDistance: CGFloat = 115.0
+    /// Minimum horizontal fling velocity (in points/sec) that can also assist a deliberate page turn when dragged at least 75 pt.
+    public static let pageTurnMinimumFlingVelocity: CGFloat = 650.0
+    /// Duration (in seconds) of the horizontal page-slide animation.
+    public static let pageTurnAnimationDuration: CFTimeInterval = 0.42
+
     public init(
         pageID: UUID,
         paperType: PaperType,
@@ -134,25 +141,6 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         doubleTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         scrollView.addGestureRecognizer(doubleTap)
 
-        // Finger swipe left -> next / new page; finger swipe right -> previous page
-        let swipeRight = UISwipeGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleHorizontalSwipe(_:))
-        )
-        swipeRight.direction = .right
-        swipeRight.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
-        swipeRight.delegate = context.coordinator
-        scrollView.addGestureRecognizer(swipeRight)
-
-        let swipeLeft = UISwipeGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleHorizontalSwipe(_:))
-        )
-        swipeLeft.direction = .left
-        swipeLeft.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
-        swipeLeft.delegate = context.coordinator
-        scrollView.addGestureRecognizer(swipeLeft)
-
         context.coordinator.scrollView = scrollView
         context.coordinator.pageContainerView = pageContainer
         context.coordinator.paperHostingController = paperHost
@@ -197,6 +185,8 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         private var hasAppliedInitialZoom = false
         private var isTrackingFitWidth = true
         private var pendingTransitionSubtype: CATransitionSubtype?
+        private var dragStartWasAtLeftEdge = false
+        private var dragStartWasAtRightEdge = false
 
         init(parent: PencilCanvasScrollView) {
             self.parent = parent
@@ -373,8 +363,8 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 let transition = CATransition()
                 transition.type = .push
                 transition.subtype = pendingTransitionSubtype ?? .fromRight
-                transition.duration = 0.24
-                transition.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                transition.duration = PencilCanvasScrollView.pageTurnAnimationDuration
+                transition.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
                 pageContainerView.layer.add(transition, forKey: "pageTurnSlide")
                 pendingTransitionSubtype = nil
             }
@@ -461,66 +451,62 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             }
         }
 
-        // MARK: - Swipe Page Turning at Any Zoom
+        // MARK: - Deliberate Horizontal Drag Page Turning at Any Zoom
 
-        @objc func handleHorizontalSwipe(_ recognizer: UISwipeGestureRecognizer) {
-            guard let scrollView, canTriggerPageSwipe(for: recognizer.direction, in: scrollView) else { return }
-            switch recognizer.direction {
-            case .left:
+        public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+            let edgeStates = horizontalEdgeStates(in: scrollView)
+            dragStartWasAtLeftEdge = edgeStates.atLeftEdge
+            dragStartWasAtRightEdge = edgeStates.atRightEdge
+        }
+
+        public func scrollViewWillEndDragging(
+            _ scrollView: UIScrollView,
+            withVelocity velocity: CGPoint,
+            targetContentOffset: UnsafeMutablePointer<CGPoint>
+        ) {
+            let translation = scrollView.panGestureRecognizer.translation(in: scrollView)
+            let horizontalDistance = abs(translation.x)
+            let verticalDistance = abs(translation.y)
+
+            // Require a predominantly horizontal gesture (at least 1.5x more horizontal than vertical)
+            guard horizontalDistance > verticalDistance * 1.5 else { return }
+
+            let panicSpeedPtPerSec = abs(velocity.x) * 1000.0
+            let meetsDistanceThreshold = horizontalDistance >= PencilCanvasScrollView.pageTurnRequiredDragDistance
+            let meetsFastFlingThreshold = (horizontalDistance >= 75.0 && panicSpeedPtPerSec >= PencilCanvasScrollView.pageTurnMinimumFlingVelocity)
+            guard meetsDistanceThreshold || meetsFastFlingThreshold else { return }
+
+            if translation.x < 0 && dragStartWasAtRightEdge {
+                // Dragged right-to-left (Next / New page)
                 pendingTransitionSubtype = .fromRight
-                parent.onSwipeToNextPage?()
-            case .right:
-                guard parent.canGoToPreviousPage else { return }
+                DispatchQueue.main.async { [weak self] in
+                    self?.parent.onSwipeToNextPage?()
+                }
+            } else if translation.x > 0 && dragStartWasAtLeftEdge && parent.canGoToPreviousPage {
+                // Dragged left-to-right (Previous page)
                 pendingTransitionSubtype = .fromLeft
-                parent.onSwipeToPreviousPage?()
-            default:
-                break
+                DispatchQueue.main.async { [weak self] in
+                    self?.parent.onSwipeToPreviousPage?()
+                }
             }
         }
 
-        /// Returns `true` when a horizontal swipe should turn the page:
-        /// - Whenever the page width fits inside (or snaps to) the viewport width, OR
-        /// - When zoomed in wider than the viewport and the scroll view is already at its right edge (for swipe-left / next page) or left edge (for swipe-right / previous page).
-        private func canTriggerPageSwipe(for direction: UISwipeGestureRecognizer.Direction, in scrollView: UIScrollView) -> Bool {
+        private func horizontalEdgeStates(in scrollView: UIScrollView) -> (atLeftEdge: Bool, atRightEdge: Bool) {
             let scaledPageWidth = PageGeometry.a4Width * scrollView.zoomScale
             let fitWidthMax = scrollView.bounds.width - (PageGeometry.viewportPadding * 1.5)
 
-            // If the page fits horizontally (including Fit-to-Width mode), always allow page-turn swipes
+            // If the page fits horizontally (including Fit-to-Width mode), it is simultaneously at both horizontal edges
             if scaledPageWidth <= fitWidthMax + 8.0 {
-                return true
+                return (true, true)
             }
 
-            // When zoomed in wider than the screen, allow turning the page when already scrolled to that horizontal edge
             let minOffsetX = -scrollView.contentInset.left
             let maxOffsetX = scrollView.contentSize.width - scrollView.bounds.width + scrollView.contentInset.right
-            let edgeTolerance: CGFloat = 28.0
+            let edgeTolerance: CGFloat = 20.0
 
-            switch direction {
-            case .left:
-                return scrollView.contentOffset.x >= (maxOffsetX - edgeTolerance)
-            case .right:
-                return scrollView.contentOffset.x <= (minOffsetX + edgeTolerance)
-            default:
-                return false
-            }
-        }
-
-        public func gestureRecognizer(
-            _ gestureRecognizer: UIGestureRecognizer,
-            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
-        ) -> Bool {
-            if gestureRecognizer is UISwipeGestureRecognizer {
-                return true
-            }
-            return false
-        }
-
-        public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            if let swipe = gestureRecognizer as? UISwipeGestureRecognizer {
-                guard let scrollView else { return false }
-                return canTriggerPageSwipe(for: swipe.direction, in: scrollView)
-            }
-            return true
+            let atLeft = scrollView.contentOffset.x <= (minOffsetX + edgeTolerance)
+            let atRight = scrollView.contentOffset.x >= (maxOffsetX - edgeTolerance)
+            return (atLeft, atRight)
         }
 
         // MARK: - PKCanvasViewDelegate & Scribble-to-Erase
