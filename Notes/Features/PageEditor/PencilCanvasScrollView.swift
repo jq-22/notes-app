@@ -237,9 +237,9 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         @objc func handleHorizontalSwipe(_ recognizer: UISwipeGestureRecognizer) {
             guard let scrollView, scrollView.zoomScale <= 1.05 else { return }
             switch recognizer.direction {
-            case .right:
-                parent.onSwipeToNextPage?()
             case .left:
+                parent.onSwipeToNextPage?()
+            case .right:
                 parent.onSwipeToPreviousPage?()
             default:
                 break

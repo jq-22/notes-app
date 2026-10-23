@@ -81,14 +81,14 @@ public struct PageEditorView: View {
                     Label("Previous Page", systemImage: "chevron.left")
                 }
                 .disabled(!viewModel.canGoToPreviousPage)
-                .help("Go to previous page (or swipe left)")
+                .help("Go to previous page (or swipe right)")
 
                 Button {
                     viewModel.goToNextOrCreatePage()
                 } label: {
                     Label("Next / New Page", systemImage: "chevron.right")
                 }
-                .help("Go to next page or create a new page (or swipe right)")
+                .help("Go to next page or create a new page (or swipe left)")
             }
 
             ToolbarItemGroup(placement: .topBarTrailing) {
