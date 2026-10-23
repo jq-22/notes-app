@@ -17,7 +17,8 @@ import UIKit
 extension InkColorPreset {
     public var swiftUIColor: Color {
         switch self {
-        case .primary: return Color(uiColor: .label)
+        case .black: return Color(red: 0.08, green: 0.08, blue: 0.08)
+        case .white: return Color.white
         case .blue: return Color(uiColor: .systemBlue)
         case .red: return Color(uiColor: .systemRed)
         case .green: return Color(uiColor: .systemGreen)
@@ -30,7 +31,12 @@ extension InkColorPreset {
     public func uiColor(opacity: CGFloat) -> UIColor {
         let base: UIColor
         switch self {
-        case .primary: base = .label
+        case .black:
+            // Fixed near-black RGB so PencilKit does not auto-invert it to white in dark mode
+            base = UIColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 1.0)
+        case .white:
+            // Fixed near-white RGB so PencilKit does not auto-invert it to black in dark mode
+            base = UIColor(red: 0.98, green: 0.98, blue: 0.98, alpha: 1.0)
         case .blue: base = .systemBlue
         case .red: base = .systemRed
         case .green: base = .systemGreen
@@ -414,7 +420,7 @@ public struct DrawingToolMenuButton: View {
     }
 
     private func colorSwatchesGrid(selected: Binding<InkColorPreset>) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 5) {
             ForEach(InkColorPreset.allCases) { preset in
                 Button {
                     selected.wrappedValue = preset
@@ -422,15 +428,15 @@ public struct DrawingToolMenuButton: View {
                     ZStack {
                         Circle()
                             .fill(preset.swiftUIColor)
-                            .frame(width: 19, height: 19)
+                            .frame(width: 17, height: 17)
                             .overlay(
                                 Circle()
-                                    .stroke(Color.primary.opacity(0.25), lineWidth: 1)
+                                    .stroke(Color.primary.opacity(0.35), lineWidth: 1)
                             )
                         if selected.wrappedValue == preset {
                             Circle()
                                 .stroke(Color.accentColor, lineWidth: 2)
-                                .frame(width: 23, height: 23)
+                                .frame(width: 21, height: 21)
                         }
                     }
                 }

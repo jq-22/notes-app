@@ -37,9 +37,9 @@ public struct PageThumbnailView: View {
               !drawing.strokes.isEmpty else {
             return nil
         }
-        let traits = UITraitCollection(userInterfaceStyle: colorScheme == .dark ? .dark : .light)
+        let lightTraits = UITraitCollection(userInterfaceStyle: .light)
         var image: UIImage?
-        traits.performAsCurrent {
+        lightTraits.performAsCurrent {
             image = drawing.image(
                 from: CGRect(origin: .zero, size: PageGeometry.a4Size),
                 scale: max(displayScale, 1.0) * (Theme.Thumbnail.width / PageGeometry.a4Width)

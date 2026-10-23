@@ -47,9 +47,10 @@ public enum EraserMode: String, Codable, CaseIterable, Equatable, Sendable {
     }
 }
 
-/// Standard ink colour presets that adapt cleanly or remain legible in both Light and Dark modes.
+/// Explicit ink colour presets (with separate Black and White options instead of automatic dark/light inversion).
 public enum InkColorPreset: String, Codable, CaseIterable, Identifiable, Equatable, Sendable {
-    case primary     // Adaptive black in Light mode / white in Dark mode (.label)
+    case black
+    case white
     case blue
     case red
     case green
@@ -61,13 +62,26 @@ public enum InkColorPreset: String, Codable, CaseIterable, Identifiable, Equatab
 
     public var displayName: String {
         switch self {
-        case .primary: return "Adaptive Ink"
+        case .black: return "Black"
+        case .white: return "White"
         case .blue: return "Blue"
         case .red: return "Red"
         case .green: return "Green"
         case .orange: return "Orange"
         case .purple: return "Purple"
         case .yellow: return "Yellow"
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        if raw == "primary" {
+            self = .black
+        } else if let value = InkColorPreset(rawValue: raw) {
+            self = value
+        } else {
+            self = .black
         }
     }
 }
@@ -103,7 +117,7 @@ public struct DrawingToolState: Codable, Equatable, Sendable {
     public init(
         activeTool: DrawingToolKind = .pen,
         previousInkingTool: DrawingToolKind = .pen,
-        penColor: InkColorPreset = .primary,
+        penColor: InkColorPreset = .black,
         penWidth: CGFloat = 3.0,
         penOpacity: CGFloat = 1.0,
         highlighterColor: InkColorPreset = .yellow,
