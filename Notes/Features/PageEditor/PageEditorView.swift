@@ -16,21 +16,34 @@ public struct PageEditorView: View {
     let notebook: Notebook
     let section: NoteSection
     let page: Page
+    let isFullScreen: Bool
+    let onToggleFullScreen: () -> Void
 
     public init(
         viewModel: LibraryViewModel,
         notebook: Notebook,
         section: NoteSection,
-        page: Page
+        page: Page,
+        isFullScreen: Bool = false,
+        onToggleFullScreen: @escaping () -> Void = {}
     ) {
         self.viewModel = viewModel
         self.notebook = notebook
         self.section = section
         self.page = page
+        self.isFullScreen = isFullScreen
+        self.onToggleFullScreen = onToggleFullScreen
     }
 
     private var effectivePaper: PaperType {
         page.effectivePaperType(notebookDefault: notebook.defaultPaperType)
+    }
+
+    private var pagePositionLabel: String {
+        if let idx = section.pages.firstIndex(where: { $0.id == page.id }) {
+            return "\(page.title) (\(idx + 1)/\(section.pages.count))"
+        }
+        return page.title
     }
 
     public var body: some View {
@@ -41,12 +54,43 @@ public struct PageEditorView: View {
             isScribbleToEraseEnabled: viewModel.isScribbleToEraseEnabled,
             onDrawingChanged: { updatedData in
                 viewModel.scheduleDrawingAutosave(updatedData, for: page.id)
+            },
+            onSwipeToNextPage: {
+                viewModel.goToNextOrCreatePage()
+            },
+            onSwipeToPreviousPage: {
+                viewModel.goToPreviousPage()
             }
         )
         .ignoresSafeArea(edges: .bottom)
-        .navigationTitle(page.title)
+        .navigationTitle(pagePositionLabel)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItemGroup(placement: .topBarLeading) {
+                Button(action: onToggleFullScreen) {
+                    Label(
+                        isFullScreen ? "Show Sidebar" : "Full Screen",
+                        systemImage: isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
+                    )
+                }
+                .help(isFullScreen ? "Show sidebar menus" : "Hide sidebars for full-screen writing")
+
+                Button {
+                    viewModel.goToPreviousPage()
+                } label: {
+                    Label("Previous Page", systemImage: "chevron.left")
+                }
+                .disabled(!viewModel.canGoToPreviousPage)
+                .help("Go to previous page (or swipe left)")
+
+                Button {
+                    viewModel.goToNextOrCreatePage()
+                } label: {
+                    Label("Next / New Page", systemImage: "chevron.right")
+                }
+                .help("Go to next page or create a new page (or swipe right)")
+            }
+
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Toggle(isOn: $viewModel.isScribbleToEraseEnabled) {
                     Label(

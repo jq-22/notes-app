@@ -21,6 +21,8 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
     public let initialDrawingData: Data?
     public let isScribbleToEraseEnabled: Bool
     public let onDrawingChanged: (Data) -> Void
+    public var onSwipeToNextPage: (() -> Void)?
+    public var onSwipeToPreviousPage: (() -> Void)?
 
     public static let minimumZoomScale: CGFloat = 1.0
     public static let maximumZoomScale: CGFloat = 5.0
@@ -30,13 +32,17 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         paperType: PaperType,
         initialDrawingData: Data?,
         isScribbleToEraseEnabled: Bool,
-        onDrawingChanged: @escaping (Data) -> Void
+        onDrawingChanged: @escaping (Data) -> Void,
+        onSwipeToNextPage: (() -> Void)? = nil,
+        onSwipeToPreviousPage: (() -> Void)? = nil
     ) {
         self.pageID = pageID
         self.paperType = paperType
         self.initialDrawingData = initialDrawingData
         self.isScribbleToEraseEnabled = isScribbleToEraseEnabled
         self.onDrawingChanged = onDrawingChanged
+        self.onSwipeToNextPage = onSwipeToNextPage
+        self.onSwipeToPreviousPage = onSwipeToPreviousPage
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -96,6 +102,25 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         doubleTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         scrollView.addGestureRecognizer(doubleTap)
 
+        // Finger swipe right -> next / new page; finger swipe left -> previous page (active when unzoomed)
+        let swipeRight = UISwipeGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleHorizontalSwipe(_:))
+        )
+        swipeRight.direction = .right
+        swipeRight.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        swipeRight.delegate = context.coordinator
+        scrollView.addGestureRecognizer(swipeRight)
+
+        let swipeLeft = UISwipeGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleHorizontalSwipe(_:))
+        )
+        swipeLeft.direction = .left
+        swipeLeft.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        swipeLeft.delegate = context.coordinator
+        scrollView.addGestureRecognizer(swipeLeft)
+
         context.coordinator.scrollView = scrollView
         context.coordinator.pageContainerView = pageContainer
         context.coordinator.paperHostingController = paperHost
@@ -117,7 +142,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
     // MARK: - Coordinator
 
     @MainActor
-    public final class Coordinator: NSObject, UIScrollViewDelegate, PKCanvasViewDelegate {
+    public final class Coordinator: NSObject, UIScrollViewDelegate, PKCanvasViewDelegate, UIGestureRecognizerDelegate {
         var parent: PencilCanvasScrollView
         weak var scrollView: CenteringScrollView?
         weak var pageContainerView: UIView?
@@ -207,6 +232,36 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 )
                 scrollView.zoom(to: zoomRect, animated: true)
             }
+        }
+
+        @objc func handleHorizontalSwipe(_ recognizer: UISwipeGestureRecognizer) {
+            guard let scrollView, scrollView.zoomScale <= 1.05 else { return }
+            switch recognizer.direction {
+            case .right:
+                parent.onSwipeToNextPage?()
+            case .left:
+                parent.onSwipeToPreviousPage?()
+            default:
+                break
+            }
+        }
+
+        public func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            if gestureRecognizer is UISwipeGestureRecognizer {
+                return true
+            }
+            return false
+        }
+
+        public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            if gestureRecognizer is UISwipeGestureRecognizer {
+                guard let scrollView else { return false }
+                return scrollView.zoomScale <= 1.05
+            }
+            return true
         }
 
         // MARK: - PKCanvasViewDelegate & Scribble-to-Erase

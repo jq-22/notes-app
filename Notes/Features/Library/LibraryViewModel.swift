@@ -99,6 +99,51 @@ public final class LibraryViewModel {
         return page.effectivePaperType(notebookDefault: defaultPaper)
     }
 
+    /// Index of the currently selected page within the active section (0-based), or `nil` if none.
+    public var selectedPageIndex: Int? {
+        guard let section = selectedSection, let selectedPageID else { return nil }
+        return section.pages.firstIndex(where: { $0.id == selectedPageID })
+    }
+
+    public var canGoToPreviousPage: Bool {
+        guard let index = selectedPageIndex else { return false }
+        return index > 0
+    }
+
+    /// Selects the previous page in the current section if one exists.
+    /// - Returns: `true` if navigation occurred, `false` if already on the first page.
+    @discardableResult
+    public func goToPreviousPage() -> Bool {
+        guard let section = selectedSection,
+              let index = selectedPageIndex,
+              index > 0 else {
+            return false
+        }
+        selectedPageID = section.pages[index - 1].id
+        return true
+    }
+
+    /// Advances to the next page in the current section, or creates and selects a new page at the end if already on the last page.
+    /// - Returns: The newly selected (or newly created) `Page`, or `nil` if no section is active.
+    @discardableResult
+    public func goToNextOrCreatePage() -> Page? {
+        guard let notebook = selectedNotebook,
+              let section = selectedSection else {
+            return nil
+        }
+        if let index = selectedPageIndex, index + 1 < section.pages.count {
+            let nextPage = section.pages[index + 1]
+            selectedPageID = nextPage.id
+            return nextPage
+        } else {
+            return createPage(
+                in: section.id,
+                notebookID: notebook.id,
+                afterPageID: section.pages.last?.id
+            )
+        }
+    }
+
     // MARK: - Persistence
 
     public func loadFromStore() {

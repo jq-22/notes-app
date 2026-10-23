@@ -499,7 +499,13 @@ public struct LibraryRootView: View {
                 viewModel: viewModel,
                 notebook: notebook,
                 section: section,
-                page: page
+                page: page,
+                isFullScreen: columnVisibility == .detailOnly,
+                onToggleFullScreen: {
+                    withAnimation {
+                        columnVisibility = (columnVisibility == .detailOnly) ? .all : .detailOnly
+                    }
+                }
             )
         } else {
             ContentUnavailableView(

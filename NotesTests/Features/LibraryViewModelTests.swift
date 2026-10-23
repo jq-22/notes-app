@@ -144,4 +144,32 @@ struct LibraryViewModelTests {
         #expect(store.storedDrawings[page1ID] == sampleDrawing)
         #expect(vm.drawingRevisionByPageID[page1ID] == 1)
     }
+
+    @Test("Swipe navigation moves to next page or creates a new page at the end, and moves back to previous page")
+    func swipeNavigationNextOrCreateAndPrevious() throws {
+        let store = InMemoryPageStore()
+        let vm = LibraryViewModel(store: store)
+
+        let notebook = vm.createNotebook(title: "Swipe Test")
+        let page1ID = try #require(vm.selectedPageID)
+        #expect(vm.canGoToPreviousPage == false)
+        #expect(vm.goToPreviousPage() == false)
+
+        // Swiping next on the last page creates Page 2 and selects it
+        let createdPage2 = try #require(vm.goToNextOrCreatePage())
+        #expect(createdPage2.id != page1ID)
+        #expect(vm.selectedPageID == createdPage2.id)
+        #expect(vm.notebooks[0].sections[0].pages.count == 2)
+        #expect(vm.canGoToPreviousPage == true)
+
+        // Swiping back returns to Page 1
+        #expect(vm.goToPreviousPage() == true)
+        #expect(vm.selectedPageID == page1ID)
+
+        // Swiping next again from Page 1 goes to existing Page 2 without creating a 3rd page
+        let movedToExistingPage2 = try #require(vm.goToNextOrCreatePage())
+        #expect(movedToExistingPage2.id == createdPage2.id)
+        #expect(vm.notebooks[0].sections[0].pages.count == 2)
+        #expect(notebook.id == vm.selectedNotebookID)
+    }
 }
