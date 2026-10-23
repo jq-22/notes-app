@@ -252,7 +252,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 switch state.activeTool {
                 case .pen:
                     let color = state.penColor.uiColor(opacity: state.penOpacity)
-                    pkTool = PKInkingTool(.pen, color: color, width: state.penWidth)
+                    pkTool = PKInkingTool(.monoline, color: color, width: state.penWidth)
                 case .highlighter:
                     let color = state.highlighterColor.uiColor(opacity: state.highlighterOpacity)
                     pkTool = PKInkingTool(.marker, color: color, width: state.highlighterWidth)
