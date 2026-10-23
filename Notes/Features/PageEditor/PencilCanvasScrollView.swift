@@ -2,16 +2,21 @@
 //  PencilCanvasScrollView.swift
 //  Notes
 //
-//  Responsibility: UIKit wrapper (`UIViewRepresentable`) hosting an A4 portrait `PKCanvasView` (595 x 842 pt) inside a zoomable/pannable `UIScrollView` (1x to 5x zoom, double-tap to reset).
+//  Responsibility: UIKit wrapper (`UIViewRepresentable`) hosting an A4 portrait `PKCanvasView` (595 x 842 pt) inside a zoomable/pannable `UIScrollView`.
 //  Design notes:
 //    - Paper background (`PaperBackgroundView` via `UIHostingController`) sits behind the transparent `PKCanvasView` inside the same zoom container view so paper and ink zoom together, while paper is never drawn into `PKDrawing`.
-//    - Uses `.pencilOnly` drawing policy exactly as in the working baseline, with `PKCanvasView.tool` and `PKCanvasView.isRulerActive` driven by `DrawingToolState`.
-//    - Ruler overlay: When `UIScrollView` zooms `pageContainerView`, we re-assert `canvasView.isRulerActive` and slightly scale down any internal PencilKit ruler view by ~25% so it doesn't disappear on zoom or look oversized.
-//    - Sharp Zoom Rendering: On zoom completion, updates `contentScaleFactor` on the paper background view only (never mutating `PKCanvasView`'s internal subviews/layers, which breaks Apple Pencil stroke delivery).
-//  Dependencies: SwiftUI, UIKit, PencilKit, Domain, DesignSystem.
+//    - Default Fit-to-Screen & Snap-to-Width:
+//      * On initial layout and orientation/sidebar resize, sizes the page to fill the iPad viewport (`PageGeometry.defaultInitialZoomScale`) instead of leaving it at a tiny 1.0x box.
+//      * When pinching near the Fit-to-Width scale (`±8%`), snaps cleanly to `fitWidthZoomScale` in both Portrait and Landscape.
+//      * Double-tap toggles between Fit-to-Width and Fit-Whole-Page.
+//    - Swipe Page Turning at Any Zoom + Slide Animation:
+//      * Swiping left/right turns pages not only at base zoom, but also at any zoom level whenever the page fits horizontally (such as Fit-to-Width) or is scrolled to its left/right edge.
+//      * Plays a smooth horizontal page-slide transition (`CATransition` `.push`) when moving to the next or previous page.
+//  Dependencies: SwiftUI, UIKit, PencilKit, QuartzCore, Domain, DesignSystem.
 //
 
 import PencilKit
+import QuartzCore
 import SwiftUI
 import UIKit
 
@@ -23,13 +28,14 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
     public let isScribbleToEraseEnabled: Bool
     public let undoTriggerCount: Int
     public let redoTriggerCount: Int
+    public let canGoToPreviousPage: Bool
     public let onDrawingChanged: (Data) -> Void
     public let onUndoStateChanged: (Bool, Bool) -> Void
     public let onPencilDoubleTap: () -> Void
     public var onSwipeToNextPage: (() -> Void)?
     public var onSwipeToPreviousPage: (() -> Void)?
 
-    public static let minimumZoomScale: CGFloat = 1.0
+    public static let minimumZoomScale: CGFloat = 0.85
     public static let maximumZoomScale: CGFloat = 5.0
     public static let rulerScaleFactor: CGFloat = 0.75
 
@@ -41,6 +47,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         isScribbleToEraseEnabled: Bool,
         undoTriggerCount: Int = 0,
         redoTriggerCount: Int = 0,
+        canGoToPreviousPage: Bool = false,
         onDrawingChanged: @escaping (Data) -> Void,
         onUndoStateChanged: @escaping (Bool, Bool) -> Void = { _, _ in },
         onPencilDoubleTap: @escaping () -> Void = {},
@@ -54,6 +61,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         self.isScribbleToEraseEnabled = isScribbleToEraseEnabled
         self.undoTriggerCount = undoTriggerCount
         self.redoTriggerCount = redoTriggerCount
+        self.canGoToPreviousPage = canGoToPreviousPage
         self.onDrawingChanged = onDrawingChanged
         self.onUndoStateChanged = onUndoStateChanged
         self.onPencilDoubleTap = onPencilDoubleTap
@@ -74,6 +82,9 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         scrollView.showsHorizontalScrollIndicator = true
         scrollView.showsVerticalScrollIndicator = true
         scrollView.backgroundColor = UIColor.secondarySystemBackground
+        scrollView.onViewportSizeChanged = { [weak coordinator = context.coordinator] newSize in
+            coordinator?.handleViewportSizeChanged(newSize)
+        }
 
         // Page container at A4 portrait points (595 x 842)
         let pageContainer = UIView(frame: CGRect(origin: .zero, size: PageGeometry.a4Size))
@@ -114,7 +125,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         scrollView.pageContainerView = pageContainer
         scrollView.contentSize = PageGeometry.a4Size
 
-        // Double-tap with finger to reset zoom to 1x
+        // Double-tap with finger to toggle between Fit-Width and Fit-Whole-Page
         let doubleTap = UITapGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handleDoubleTap(_:))
@@ -183,11 +194,57 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         private var lastAppliedToolState: DrawingToolState?
         private var lastHandledUndoTriggerCount: Int = 0
         private var lastHandledRedoTriggerCount: Int = 0
+        private var hasAppliedInitialZoom = false
+        private var isTrackingFitWidth = true
+        private var pendingTransitionSubtype: CATransitionSubtype?
 
         init(parent: PencilCanvasScrollView) {
             self.parent = parent
             self.lastHandledUndoTriggerCount = parent.undoTriggerCount
             self.lastHandledRedoTriggerCount = parent.redoTriggerCount
+        }
+
+        // MARK: - Viewport Sizing & Snap-to-Width
+
+        func handleViewportSizeChanged(_ viewportSize: CGSize) {
+            guard let scrollView, viewportSize.width > 100, viewportSize.height > 100 else { return }
+
+            let fitPage = PageGeometry.fitWholePageZoomScale(forViewportSize: viewportSize)
+            scrollView.minimumZoomScale = min(0.85, fitPage)
+
+            if !hasAppliedInitialZoom {
+                hasAppliedInitialZoom = true
+                isTrackingFitWidth = true
+                let initialScale = PageGeometry.defaultInitialZoomScale(forViewportSize: viewportSize)
+                applyZoomScaleAndScrollToTop(initialScale, on: scrollView, animated: false)
+            } else if isTrackingFitWidth {
+                let targetScale = PageGeometry.defaultInitialZoomScale(forViewportSize: viewportSize)
+                if abs(scrollView.zoomScale - targetScale) > 0.01 {
+                    scrollView.setZoomScale(targetScale, animated: true)
+                    scrollView.centerPageContainer()
+                }
+            }
+        }
+
+        private func applyZoomScaleAndScrollToTop(_ scale: CGFloat, on scrollView: CenteringScrollView, animated: Bool) {
+            let clamped = min(max(scale, scrollView.minimumZoomScale), scrollView.maximumZoomScale)
+            scrollView.setZoomScale(clamped, animated: animated)
+            scrollView.centerPageContainer()
+            let topOffset = CGPoint(
+                x: -scrollView.contentInset.left,
+                y: -scrollView.contentInset.top
+            )
+            scrollView.setContentOffset(topOffset, animated: animated)
+            updatePaperRenderScale(for: clamped, in: scrollView)
+        }
+
+        private func updatePaperRenderScale(for zoomScale: CGFloat, in scrollView: UIScrollView) {
+            let screenScale = scrollView.window?.screen.scale ?? UIScreen.main.scale
+            let clampedZoom = min(max(zoomScale, 1.0), PencilCanvasScrollView.maximumZoomScale)
+            if let paperView = paperHostingController?.view {
+                paperView.contentScaleFactor = screenScale * clampedZoom
+                paperView.setNeedsDisplay()
+            }
         }
 
         // MARK: - Tool State
@@ -236,7 +293,6 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 canvasView.isRulerActive = true
             }
             let zoomScale = max(scrollView?.zoomScale ?? 1.0, 1.0)
-            // Keep the ruler 25% smaller than default and counter-scale when zoomed in so it stays a comfortable size on screen
             let targetScale = PencilCanvasScrollView.rulerScaleFactor / sqrt(zoomScale)
             Self.scaleRulerSubviews(in: canvasView, scale: targetScale)
         }
@@ -303,13 +359,25 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             }
         }
 
-        // MARK: - Page Loading
+        // MARK: - Page Loading & Slide Transition
 
         func loadPageIfNeeded(pageID: UUID, data: Data?) {
             guard currentLoadedPageID != pageID, let canvasView else { return }
+            let isSwitchingFromAnotherPage = (currentLoadedPageID != nil)
             currentLoadedPageID = pageID
             isProgrammaticDrawingUpdate = true
             defer { isProgrammaticDrawingUpdate = false }
+
+            // Play smooth page-slide animation when switching pages
+            if isSwitchingFromAnotherPage, let pageContainerView {
+                let transition = CATransition()
+                transition.type = .push
+                transition.subtype = pendingTransitionSubtype ?? .fromRight
+                transition.duration = 0.24
+                transition.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                pageContainerView.layer.add(transition, forKey: "pageTurnSlide")
+                pendingTransitionSubtype = nil
+            }
 
             if let data, let decoded = try? PKDrawing(data: data) {
                 canvasView.drawing = decoded
@@ -320,7 +388,17 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 previousDrawingSnapshot = empty
             }
             canvasView.undoManager?.removeAllActions()
-            scrollView?.setZoomScale(1.0, animated: false)
+
+            // Preserve the user's current zoom scale across page turns, and scroll to the top of the new page
+            if let scrollView {
+                scrollView.centerPageContainer()
+                let topOffset = CGPoint(
+                    x: -scrollView.contentInset.left,
+                    y: max(-scrollView.contentInset.top, scrollView.contentOffset.y * 0 - scrollView.contentInset.top)
+                )
+                scrollView.setContentOffset(topOffset, animated: false)
+            }
+
             DispatchQueue.main.async { [weak self] in
                 guard let self, let canvas = self.canvasView else { return }
                 canvas.becomeFirstResponder()
@@ -328,7 +406,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             }
         }
 
-        // MARK: - UIScrollViewDelegate
+        // MARK: - UIScrollViewDelegate & Snap-to-Width
 
         public func viewForZooming(in scrollView: UIScrollView) -> UIView? {
             pageContainerView
@@ -342,13 +420,22 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         }
 
         public func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
-            // Re-render paper background crisply at the new zoom scale (without touching PKCanvasView's internal sublayers)
-            let screenScale = scrollView.window?.screen.scale ?? UIScreen.main.scale
-            let clampedZoom = min(max(scale, 1.0), PencilCanvasScrollView.maximumZoomScale)
-            if let paperView = paperHostingController?.view {
-                paperView.contentScaleFactor = screenScale * clampedZoom
-                paperView.setNeedsDisplay()
+            let viewportWidth = scrollView.bounds.width
+            let fitWidth = PageGeometry.fitWidthZoomScale(forViewportWidth: viewportWidth)
+            let snapped = PageGeometry.snappedZoomScale(scale, fitWidthScale: fitWidth)
+
+            let finalScale: CGFloat
+            if abs(snapped - scale) > 0.001 {
+                finalScale = snapped
+                isTrackingFitWidth = true
+                scrollView.setZoomScale(snapped, animated: true)
+                (scrollView as? CenteringScrollView)?.centerPageContainer()
+            } else {
+                finalScale = scale
+                isTrackingFitWidth = abs(scale - fitWidth) < 0.02
             }
+
+            updatePaperRenderScale(for: finalScale, in: scrollView)
             if parent.toolState.isRulerActive {
                 adjustRulerScaleIfNeeded()
             }
@@ -356,29 +443,65 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
 
         @objc func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
             guard let scrollView else { return }
-            if scrollView.zoomScale > 1.01 {
-                scrollView.setZoomScale(1.0, animated: true)
+            let fitWidth = PageGeometry.fitWidthZoomScale(forViewportWidth: scrollView.bounds.width)
+            let fitPage = PageGeometry.fitWholePageZoomScale(forViewportSize: scrollView.bounds.size)
+
+            if abs(scrollView.zoomScale - fitWidth) > 0.06 {
+                // Snap to Fit-Width
+                isTrackingFitWidth = true
+                scrollView.setZoomScale(fitWidth, animated: true)
+                scrollView.centerPageContainer()
+                updatePaperRenderScale(for: fitWidth, in: scrollView)
             } else {
-                let location = recognizer.location(in: pageContainerView)
-                let zoomRect = CGRect(
-                    x: location.x - 100,
-                    y: location.y - 100,
-                    width: 200,
-                    height: 200
-                )
-                scrollView.zoom(to: zoomRect, animated: true)
+                // Toggle down to Fit-Whole-Page
+                isTrackingFitWidth = false
+                scrollView.setZoomScale(fitPage, animated: true)
+                scrollView.centerPageContainer()
+                updatePaperRenderScale(for: fitPage, in: scrollView)
             }
         }
 
+        // MARK: - Swipe Page Turning at Any Zoom
+
         @objc func handleHorizontalSwipe(_ recognizer: UISwipeGestureRecognizer) {
-            guard let scrollView, scrollView.zoomScale <= 1.05 else { return }
+            guard let scrollView, canTriggerPageSwipe(for: recognizer.direction, in: scrollView) else { return }
             switch recognizer.direction {
             case .left:
+                pendingTransitionSubtype = .fromRight
                 parent.onSwipeToNextPage?()
             case .right:
+                guard parent.canGoToPreviousPage else { return }
+                pendingTransitionSubtype = .fromLeft
                 parent.onSwipeToPreviousPage?()
             default:
                 break
+            }
+        }
+
+        /// Returns `true` when a horizontal swipe should turn the page:
+        /// - Whenever the page width fits inside (or snaps to) the viewport width, OR
+        /// - When zoomed in wider than the viewport and the scroll view is already at its right edge (for swipe-left / next page) or left edge (for swipe-right / previous page).
+        private func canTriggerPageSwipe(for direction: UISwipeGestureRecognizer.Direction, in scrollView: UIScrollView) -> Bool {
+            let scaledPageWidth = PageGeometry.a4Width * scrollView.zoomScale
+            let fitWidthMax = scrollView.bounds.width - (PageGeometry.viewportPadding * 1.5)
+
+            // If the page fits horizontally (including Fit-to-Width mode), always allow page-turn swipes
+            if scaledPageWidth <= fitWidthMax + 8.0 {
+                return true
+            }
+
+            // When zoomed in wider than the screen, allow turning the page when already scrolled to that horizontal edge
+            let minOffsetX = -scrollView.contentInset.left
+            let maxOffsetX = scrollView.contentSize.width - scrollView.bounds.width + scrollView.contentInset.right
+            let edgeTolerance: CGFloat = 28.0
+
+            switch direction {
+            case .left:
+                return scrollView.contentOffset.x >= (maxOffsetX - edgeTolerance)
+            case .right:
+                return scrollView.contentOffset.x <= (minOffsetX + edgeTolerance)
+            default:
+                return false
             }
         }
 
@@ -393,9 +516,9 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         }
 
         public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            if gestureRecognizer is UISwipeGestureRecognizer {
+            if let swipe = gestureRecognizer as? UISwipeGestureRecognizer {
                 guard let scrollView else { return false }
-                return scrollView.zoomScale <= 1.05
+                return canTriggerPageSwipe(for: swipe.direction, in: scrollView)
             }
             return true
         }
@@ -501,14 +624,22 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
     }
 }
 
-/// `UIScrollView` subclass that keeps the A4 page centered with comfortable margins at any zoom scale.
+/// `UIScrollView` subclass that keeps the A4 page centered with comfortable margins at any zoom scale and notifies when the viewport size changes (e.g. rotation or sidebar toggle).
 final class CenteringScrollView: UIScrollView {
     weak var pageContainerView: UIView?
-    private let workspaceMargin: CGFloat = Theme.Spacing.xLarge
+    var onViewportSizeChanged: ((CGSize) -> Void)?
+    private var lastReportedViewportSize: CGSize = .zero
+    private let workspaceMargin: CGFloat = PageGeometry.viewportPadding
 
     override func layoutSubviews() {
         super.layoutSubviews()
         centerPageContainer()
+        let currentSize = bounds.size
+        if abs(currentSize.width - lastReportedViewportSize.width) > 1.0 ||
+           abs(currentSize.height - lastReportedViewportSize.height) > 1.0 {
+            lastReportedViewportSize = currentSize
+            onViewportSizeChanged?(currentSize)
+        }
     }
 
     func centerPageContainer() {

@@ -71,4 +71,27 @@ struct NotebookHierarchyTests {
         #expect(mutableSection.deletePage(id: UUID()) == nil)
         #expect(mutableSection.pages.count == 1)
     }
+
+    @Test("PageGeometry calculates fit-to-width and snaps nearby zoom scales in both portrait and landscape")
+    func pageGeometryFitAndSnapWidth() {
+        // 12.9-inch iPad Pro portrait viewport width (1024 pt) -> fitWidth = (1024 - 48) / 595 = ~1.64x
+        let portraitSize = CGSize(width: 1024, height: 1366)
+        let portraitFitWidth = PageGeometry.fitWidthZoomScale(forViewportWidth: portraitSize.width)
+        #expect(portraitFitWidth > 1.60 && portraitFitWidth < 1.68)
+        #expect(PageGeometry.defaultInitialZoomScale(forViewportSize: portraitSize) == portraitFitWidth)
+
+        // Snap within ±8% of fitWidth snaps directly to portraitFitWidth
+        let slightlyOff = portraitFitWidth * 1.05
+        #expect(PageGeometry.snappedZoomScale(slightlyOff, fitWidthScale: portraitFitWidth) == portraitFitWidth)
+
+        // Far away zoom scale (e.g. 3.0x) is not snapped
+        #expect(PageGeometry.snappedZoomScale(3.0, fitWidthScale: portraitFitWidth) == 3.0)
+
+        // Landscape viewport (1366 x 1024)
+        let landscapeSize = CGSize(width: 1366, height: 1024)
+        let landscapeFitWidth = PageGeometry.fitWidthZoomScale(forViewportWidth: landscapeSize.width)
+        #expect(landscapeFitWidth > 2.15 && landscapeFitWidth < 2.25)
+        let landscapeInitial = PageGeometry.defaultInitialZoomScale(forViewportSize: landscapeSize)
+        #expect(landscapeInitial >= 1.15 && landscapeInitial <= landscapeFitWidth)
+    }
 }

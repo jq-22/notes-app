@@ -59,6 +59,7 @@ public struct PageEditorView: View {
             isScribbleToEraseEnabled: viewModel.isScribbleToEraseEnabled,
             undoTriggerCount: undoTriggerCount,
             redoTriggerCount: redoTriggerCount,
+            canGoToPreviousPage: viewModel.canGoToPreviousPage,
             onDrawingChanged: { updatedData in
                 viewModel.scheduleDrawingAutosave(updatedData, for: page.id)
             },
