@@ -5,9 +5,13 @@
 //  Responsibility: UIKit wrapper (`UIViewRepresentable`) hosting an A4 portrait `PKCanvasView` (595 x 842 pt) inside a zoomable/pannable `UIScrollView` (1x to 5x zoom, double-tap to reset).
 //  Design notes:
 //    - Paper background (`PaperBackgroundView` via `UIHostingController`) sits behind the transparent `PKCanvasView` inside the same zoom container view so paper and ink zoom together, while paper is never drawn into `PKDrawing`.
-//    - `PKToolPicker` is configured with only the 4 allowed tools: pen, highlighter (`.marker`), eraser, and ruler (`showsRulerActive = true`).
-//    - `drawingPolicy = .pencilOnly` so finger touches scroll and zoom by default.
-//    - After a new stroke completes (`canvasViewDrawingDidChange`), runs `ScribbleClassifier.classify(...)`. If a scribble-to-erase gesture is detected over existing strokes, replaces the drawing with the pre-scribble drawing minus covered strokes and registers an undo operation on `canvasView.undoManager` so Undo restores the erased strokes in one step.
+//    - Uses `PKCanvasView.tool` and `PKCanvasView.isRulerActive` driven by `DrawingToolState` (hiding Apple's floating `PKToolPicker` palette).
+//    - Sharp Zoom Rendering: When `UIScrollView` scales `pageContainerView` up to `zoomScale`, UIKit does not automatically increase the backing raster scale of sublayers, which makes strokes and paper lines look blurry when zoomed in. In `scrollViewDidZoom` and `scrollViewDidEndZooming`, we update `contentScaleFactor` (screenScale * zoomScale) on the canvas, paper view, and their sublayers so strokes and rule lines stay crisp up to 5x zoom.
+//    - Apple Pencil Double-Tap: Attaches a `UIPencilInteraction` to the canvas view so double-tapping the Apple Pencil switches to Rubber (Eraser) and back.
+//    - Input Policy & Navigation:
+//      * When `toolState.allowsFingerDrawing == false` (Pencil-only mode): `drawingPolicy = .pencilOnly`, 1-finger pans/scrolls, and 1-finger horizontal swipes turn pages.
+//      * When `toolState.allowsFingerDrawing == true` (Draw with Finger mode): `drawingPolicy = .anyInput`, 1-finger draws on the canvas, and 2-finger pan/pinch/swipe navigates and turns pages.
+//      * Also observes Apple Pencil touch/hover (`PencilPresenceMonitorGestureRecognizer`) so if the user touches or hovers with an Apple Pencil while in Finger mode, `onPencilDetected` can automatically switch back to Pencil-only mode.
 //  Dependencies: SwiftUI, UIKit, PencilKit, Domain, DesignSystem.
 //
 
@@ -19,8 +23,14 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
     public let pageID: UUID
     public let paperType: PaperType
     public let initialDrawingData: Data?
+    public let toolState: DrawingToolState
     public let isScribbleToEraseEnabled: Bool
+    public let undoTriggerCount: Int
+    public let redoTriggerCount: Int
     public let onDrawingChanged: (Data) -> Void
+    public let onUndoStateChanged: (Bool, Bool) -> Void
+    public let onPencilDoubleTap: () -> Void
+    public let onPencilDetected: () -> Void
     public var onSwipeToNextPage: (() -> Void)?
     public var onSwipeToPreviousPage: (() -> Void)?
 
@@ -31,16 +41,28 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         pageID: UUID,
         paperType: PaperType,
         initialDrawingData: Data?,
+        toolState: DrawingToolState,
         isScribbleToEraseEnabled: Bool,
+        undoTriggerCount: Int = 0,
+        redoTriggerCount: Int = 0,
         onDrawingChanged: @escaping (Data) -> Void,
+        onUndoStateChanged: @escaping (Bool, Bool) -> Void = { _, _ in },
+        onPencilDoubleTap: @escaping () -> Void = {},
+        onPencilDetected: @escaping () -> Void = {},
         onSwipeToNextPage: (() -> Void)? = nil,
         onSwipeToPreviousPage: (() -> Void)? = nil
     ) {
         self.pageID = pageID
         self.paperType = paperType
         self.initialDrawingData = initialDrawingData
+        self.toolState = toolState
         self.isScribbleToEraseEnabled = isScribbleToEraseEnabled
+        self.undoTriggerCount = undoTriggerCount
+        self.redoTriggerCount = redoTriggerCount
         self.onDrawingChanged = onDrawingChanged
+        self.onUndoStateChanged = onUndoStateChanged
+        self.onPencilDoubleTap = onPencilDoubleTap
+        self.onPencilDetected = onPencilDetected
         self.onSwipeToNextPage = onSwipeToNextPage
         self.onSwipeToPreviousPage = onSwipeToPreviousPage
     }
@@ -84,10 +106,23 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         canvasView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         canvasView.backgroundColor = .clear
         canvasView.isOpaque = false
-        canvasView.drawingPolicy = .pencilOnly
         canvasView.isScrollEnabled = false // Outer UIScrollView handles scrolling and zooming
         canvasView.delegate = context.coordinator
         pageContainer.addSubview(canvasView)
+
+        // 3. Apple Pencil double-tap interaction -> switch to Rubber (Eraser) and back
+        let pencilInteraction = UIPencilInteraction()
+        pencilInteraction.delegate = context.coordinator
+        canvasView.addInteraction(pencilInteraction)
+
+        // 4. Passive Apple Pencil touch detector so if the user draws with Apple Pencil while in Finger mode, we know the Pencil is active
+        let pencilDetector = PencilTouchDetectorGestureRecognizer(onPencilTouch: {
+            context.coordinator.parent.onPencilDetected()
+        })
+        pencilDetector.cancelsTouchesInView = false
+        pencilDetector.delaysTouchesBegan = false
+        pencilDetector.delaysTouchesEnded = false
+        canvasView.addGestureRecognizer(pencilDetector)
 
         scrollView.addSubview(pageContainer)
         scrollView.pageContainerView = pageContainer
@@ -102,7 +137,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         doubleTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         scrollView.addGestureRecognizer(doubleTap)
 
-        // Finger swipe right -> next / new page; finger swipe left -> previous page (active when unzoomed)
+        // Horizontal page-turn swipe recognizers (1-finger in Pencil mode, 2-finger in Finger-drawing mode)
         let swipeRight = UISwipeGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handleHorizontalSwipe(_:))
@@ -125,10 +160,11 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         context.coordinator.pageContainerView = pageContainer
         context.coordinator.paperHostingController = paperHost
         context.coordinator.canvasView = canvasView
+        context.coordinator.swipeLeftRecognizer = swipeLeft
+        context.coordinator.swipeRightRecognizer = swipeRight
 
-        // Load initial drawing for pageID
         context.coordinator.loadPageIfNeeded(pageID: pageID, data: initialDrawingData)
-        context.coordinator.configureToolPicker(for: canvasView)
+        context.coordinator.applyToolState(toolState, to: canvasView, scrollView: scrollView)
 
         return scrollView
     }
@@ -137,59 +173,134 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         context.coordinator.parent = self
         context.coordinator.paperHostingController?.rootView = PaperBackgroundView(paperType: paperType)
         context.coordinator.loadPageIfNeeded(pageID: pageID, data: initialDrawingData)
+        if let canvasView = context.coordinator.canvasView {
+            context.coordinator.applyToolState(toolState, to: canvasView, scrollView: scrollView)
+            context.coordinator.handleUndoRedoTriggersIfNeeded(
+                undoTriggerCount: undoTriggerCount,
+                redoTriggerCount: redoTriggerCount,
+                on: canvasView
+            )
+        }
     }
 
     // MARK: - Coordinator
 
     @MainActor
-    public final class Coordinator: NSObject, UIScrollViewDelegate, PKCanvasViewDelegate, UIGestureRecognizerDelegate {
+    public final class Coordinator: NSObject, UIScrollViewDelegate, PKCanvasViewDelegate, UIGestureRecognizerDelegate, UIPencilInteractionDelegate {
         var parent: PencilCanvasScrollView
         weak var scrollView: CenteringScrollView?
         weak var pageContainerView: UIView?
         var paperHostingController: UIHostingController<PaperBackgroundView>?
         weak var canvasView: PKCanvasView?
+        weak var swipeLeftRecognizer: UISwipeGestureRecognizer?
+        weak var swipeRightRecognizer: UISwipeGestureRecognizer?
 
-        private var toolPicker: PKToolPicker?
         private var currentLoadedPageID: UUID?
         private var isProgrammaticDrawingUpdate = false
         private var previousDrawingSnapshot = PKDrawing()
+        private var lastHandledUndoTriggerCount: Int = 0
+        private var lastHandledRedoTriggerCount: Int = 0
 
         init(parent: PencilCanvasScrollView) {
             self.parent = parent
+            self.lastHandledUndoTriggerCount = parent.undoTriggerCount
+            self.lastHandledRedoTriggerCount = parent.redoTriggerCount
         }
 
-        func configureToolPicker(for canvasView: PKCanvasView) {
-            // Trim tool picker to the 4 spec tools: Pen, Highlighter (marker), Eraser, and Ruler.
-            let defaultPen = PKInkingTool(.pen, color: .label, width: 3.0)
-            let defaultHighlighter = PKInkingTool(.marker, color: .systemYellow, width: 18.0)
-            let defaultEraser = PKEraserTool(.vector)
+        // MARK: - Tool State & Input Policy
 
-            let picker: PKToolPicker
-            if #available(iOS 18.0, *) {
-                let items: [PKToolPickerItem] = [
-                    PKToolPickerInkingItem(type: .pen, color: .label, width: 3.0),
-                    PKToolPickerInkingItem(type: .marker, color: .systemYellow, width: 18.0),
-                    PKToolPickerEraserItem(type: .vector),
-                    PKToolPickerRulerItem()
-                ]
-                picker = PKToolPicker(toolItems: items)
-            } else {
-                picker = PKToolPicker()
+        func applyToolState(_ state: DrawingToolState, to canvasView: PKCanvasView, scrollView: UIScrollView) {
+            // 1. Construct the PKTool from DrawingToolState
+            let pkTool: PKTool
+            switch state.activeTool {
+            case .pen:
+                let color = state.penColor.uiColor(opacity: state.penOpacity)
+                pkTool = PKInkingTool(.pen, color: color, width: state.penWidth)
+            case .highlighter:
+                let color = state.highlighterColor.uiColor(opacity: state.highlighterOpacity)
+                pkTool = PKInkingTool(.marker, color: color, width: state.highlighterWidth)
+            case .eraser:
+                switch state.eraserMode {
+                case .object:
+                    pkTool = PKEraserTool(.vector)
+                case .pixel:
+                    pkTool = PKEraserTool(.bitmap, width: state.eraserWidth)
+                }
+            }
+            canvasView.tool = pkTool
+
+            // 2. Toggle PencilKit's native ruler overlay
+            if canvasView.isRulerActive != state.isRulerActive {
+                canvasView.isRulerActive = state.isRulerActive
             }
 
-            picker.selectedTool = defaultPen
-            picker.showsDrawingPolicyControls = false
-            picker.addObserver(canvasView)
-            picker.setVisible(true, forFirstResponder: canvasView)
-            self.toolPicker = picker
+            // 3. Input policy:
+            //    - Pencil-only mode (allowsFingerDrawing == false): Pencil draws; 1-finger pans/swipes.
+            //    - Finger-drawing mode (allowsFingerDrawing == true): 1-finger draws; 2-fingers pan/swipe.
+            let targetPolicy: PKCanvasViewDrawingPolicy = state.allowsFingerDrawing ? .anyInput : .pencilOnly
+            if canvasView.drawingPolicy != targetPolicy {
+                canvasView.drawingPolicy = targetPolicy
+            }
 
-            // Suppress unused warning on older SDK fallback constants
-            _ = (defaultHighlighter, defaultEraser)
+            let minTouchesForNav = state.minimumTouchCountForNavigationSwipes
+            if scrollView.panGestureRecognizer.minimumNumberOfTouches != minTouchesForNav {
+                scrollView.panGestureRecognizer.minimumNumberOfTouches = minTouchesForNav
+            }
+            swipeLeftRecognizer?.numberOfTouchesRequired = minTouchesForNav
+            swipeRightRecognizer?.numberOfTouchesRequired = minTouchesForNav
+        }
 
-            DispatchQueue.main.async {
-                canvasView.becomeFirstResponder()
+        func handleUndoRedoTriggersIfNeeded(
+            undoTriggerCount: Int,
+            redoTriggerCount: Int,
+            on canvasView: PKCanvasView
+        ) {
+            if undoTriggerCount != lastHandledUndoTriggerCount {
+                lastHandledUndoTriggerCount = undoTriggerCount
+                if canvasView.undoManager?.canUndo == true {
+                    canvasView.undoManager?.undo()
+                    previousDrawingSnapshot = canvasView.drawing
+                    parent.onDrawingChanged(canvasView.drawing.dataRepresentation())
+                    notifyUndoState(for: canvasView)
+                }
+            }
+            if redoTriggerCount != lastHandledRedoTriggerCount {
+                lastHandledRedoTriggerCount = redoTriggerCount
+                if canvasView.undoManager?.canRedo == true {
+                    canvasView.undoManager?.redo()
+                    previousDrawingSnapshot = canvasView.drawing
+                    parent.onDrawingChanged(canvasView.drawing.dataRepresentation())
+                    notifyUndoState(for: canvasView)
+                }
             }
         }
+
+        private func notifyUndoState(for canvasView: PKCanvasView) {
+            let canUndo = canvasView.undoManager?.canUndo ?? false
+            let canRedo = canvasView.undoManager?.canRedo ?? false
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.onUndoStateChanged(canUndo, canRedo)
+            }
+        }
+
+        // MARK: - Apple Pencil Double-Tap Delegate
+
+        @available(iOS 17.5, *)
+        public func pencilInteraction(
+            _ interaction: UIPencilInteraction,
+            didReceiveTap tap: UIPencilInteraction.Tap
+        ) {
+            parent.onPencilDoubleTap()
+        }
+
+        public func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
+            // Fallback for older iOS delegate signature if invoked
+            if #unavailable(iOS 17.5) {
+                parent.onPencilDoubleTap()
+            }
+        }
+
+        // MARK: - Page Loading
 
         func loadPageIfNeeded(pageID: UUID, data: Data?) {
             guard currentLoadedPageID != pageID, let canvasView else { return }
@@ -205,10 +316,22 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 canvasView.drawing = empty
                 previousDrawingSnapshot = empty
             }
+            canvasView.undoManager?.removeAllActions()
             scrollView?.setZoomScale(1.0, animated: false)
+            if let scrollView {
+                updateSharpRenderingScale(for: scrollView.zoomScale)
+            }
+            if !canvasView.isFirstResponder {
+                DispatchQueue.main.async {
+                    canvasView.becomeFirstResponder()
+                    self.notifyUndoState(for: canvasView)
+                }
+            } else {
+                notifyUndoState(for: canvasView)
+            }
         }
 
-        // MARK: - UIScrollViewDelegate
+        // MARK: - UIScrollViewDelegate & Sharp Zoom Rendering
 
         public func viewForZooming(in scrollView: UIScrollView) -> UIView? {
             pageContainerView
@@ -218,10 +341,40 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             (scrollView as? CenteringScrollView)?.centerPageContainer()
         }
 
+        public func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+            updateSharpRenderingScale(for: scale)
+        }
+
+        /// Updates the backing raster scale of `pageContainerView`, `paperHostingController.view`, `canvasView`, and their sublayers so strokes and paper lines re-rasterize crisply when zoomed in up to 5x.
+        private func updateSharpRenderingScale(for zoomScale: CGFloat) {
+            let screenScale = scrollView?.window?.screen.scale ?? UIScreen.main.scale
+            let clampedZoom = min(max(zoomScale, 1.0), PencilCanvasScrollView.maximumZoomScale)
+            let effectiveScale = screenScale * clampedZoom
+
+            if let pageContainerView {
+                Self.applyContentScaleRecursively(effectiveScale, to: pageContainerView)
+            }
+            canvasView?.setNeedsDisplay()
+            paperHostingController?.view.setNeedsDisplay()
+        }
+
+        private static func applyContentScaleRecursively(_ scale: CGFloat, to view: UIView) {
+            view.contentScaleFactor = scale
+            view.layer.contentsScale = scale
+            for sublayer in view.layer.sublayers ?? [] {
+                sublayer.contentsScale = scale
+                sublayer.setNeedsDisplay()
+            }
+            for subview in view.subviews {
+                applyContentScaleRecursively(scale, to: subview)
+            }
+        }
+
         @objc func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
             guard let scrollView else { return }
             if scrollView.zoomScale > 1.01 {
                 scrollView.setZoomScale(1.0, animated: true)
+                updateSharpRenderingScale(for: 1.0)
             } else {
                 let location = recognizer.location(in: pageContainerView)
                 let zoomRect = CGRect(
@@ -274,6 +427,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
 
             // Check if exactly one new stroke was added on top of existing strokes
             if parent.isScribbleToEraseEnabled,
+               parent.toolState.activeTool != .eraser,
                currentDrawing.strokes.count == priorDrawing.strokes.count + 1,
                !priorDrawing.strokes.isEmpty,
                let latestStroke = currentDrawing.strokes.last {
@@ -313,6 +467,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
 
             previousDrawingSnapshot = currentDrawing
             parent.onDrawingChanged(currentDrawing.dataRepresentation())
+            notifyUndoState(for: canvasView)
         }
 
         private func applyUndoableDrawingReplacement(
@@ -339,6 +494,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             }
             canvasView.undoManager?.setActionName(actionName)
             parent.onDrawingChanged(newDrawing.dataRepresentation())
+            notifyUndoState(for: canvasView)
         }
 
         private func samplePoints(from path: PKStrokePath, maxSamples: Int = 96) -> [CGPoint] {
@@ -359,6 +515,23 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             }
             return pts
         }
+    }
+}
+
+/// Passive touch observer that detects when an Apple Pencil (`.pencil`) touches the canvas without consuming or delaying any touches.
+final class PencilTouchDetectorGestureRecognizer: UIGestureRecognizer {
+    private let onPencilTouch: () -> Void
+
+    init(onPencilTouch: @escaping () -> Void) {
+        self.onPencilTouch = onPencilTouch
+        super.init(target: nil, action: nil)
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        if touches.contains(where: { $0.type == .pencil }) {
+            onPencilTouch()
+        }
+        state = .failed
     }
 }
 

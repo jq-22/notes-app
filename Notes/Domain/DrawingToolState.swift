@@ -1,0 +1,190 @@
+//
+//  DrawingToolState.swift
+//  Notes
+//
+//  Responsibility: Pure value model representing the user's selected drawing tool (Pen, Highlighter, Rubber/Eraser, Ruler toggle), tool parameters (colour, width, opacity, eraser mode), Apple Pencil double-tap switching, and input policy (Pencil-only vs Draw with Finger).
+//  Dependencies: Foundation, CoreGraphics (imports no UIKit/SwiftUI/PencilKit).
+//  Errors: Clamps stroke widths and opacities to valid ranges.
+//  Tested in: NotesTests/Domain/DrawingToolStateTests.swift
+//
+
+import CoreGraphics
+import Foundation
+
+/// Active primary tool in the editor.
+public enum DrawingToolKind: String, Codable, CaseIterable, Equatable, Sendable {
+    case pen
+    case highlighter
+    case eraser
+
+    public var displayName: String {
+        switch self {
+        case .pen: return "Pen"
+        case .highlighter: return "Highlighter"
+        case .eraser: return "Rubber"
+        }
+    }
+
+    public var systemImageName: String {
+        switch self {
+        case .pen: return "pencil.tip"
+        case .highlighter: return "highlighter"
+        case .eraser: return "eraser.fill"
+        }
+    }
+}
+
+/// Eraser mode: whole-stroke ("Object") vs pixel ("Bitmap") with adjustable width.
+public enum EraserMode: String, Codable, CaseIterable, Equatable, Sendable {
+    case object
+    case pixel
+
+    public var displayName: String {
+        switch self {
+        case .object: return "Object (Whole Stroke)"
+        case .pixel: return "Pixel"
+        }
+    }
+}
+
+/// Standard ink colour presets that adapt cleanly or remain legible in both Light and Dark modes.
+public enum InkColorPreset: String, Codable, CaseIterable, Identifiable, Equatable, Sendable {
+    case primary     // Adaptive black in Light mode / white in Dark mode (.label)
+    case blue
+    case red
+    case green
+    case orange
+    case purple
+    case yellow
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .primary: return "Adaptive Ink"
+        case .blue: return "Blue"
+        case .red: return "Red"
+        case .green: return "Green"
+        case .orange: return "Orange"
+        case .purple: return "Purple"
+        case .yellow: return "Yellow"
+        }
+    }
+}
+
+/// Complete, testable state for the custom 4-tool menu (Pen, Highlighter, Rubber, Ruler) and input policy.
+public struct DrawingToolState: Codable, Equatable, Sendable {
+    public var activeTool: DrawingToolKind
+    /// Remembers the last inking tool (`.pen` or `.highlighter`) so Apple Pencil double-tap can toggle to `.eraser` and back.
+    public private(set) var previousInkingTool: DrawingToolKind
+
+    // Pen settings
+    public var penColor: InkColorPreset
+    public var penWidth: CGFloat
+    public var penOpacity: CGFloat
+
+    // Highlighter settings
+    public var highlighterColor: InkColorPreset
+    public var highlighterWidth: CGFloat
+    public var highlighterOpacity: CGFloat
+
+    // Rubber (Eraser) settings
+    public var eraserMode: EraserMode
+    public var eraserWidth: CGFloat
+
+    // Ruler overlay toggle (independent of active tool)
+    public var isRulerActive: Bool
+
+    // Input policy: when false (default), Pencil-only draws and 1-finger pans/swipes.
+    // When true ("Draw with Finger" in Settings, or auto-fallback when no Pencil is used), 1-finger draws and 2-fingers pan/swipe.
+    public var allowsFingerDrawing: Bool
+
+    public static let widthRange: ClosedRange<CGFloat> = 1.0...24.0
+    public static let highlighterWidthRange: ClosedRange<CGFloat> = 6.0...40.0
+    public static let eraserWidthRange: ClosedRange<CGFloat> = 4.0...48.0
+    public static let opacityRange: ClosedRange<CGFloat> = 0.15...1.0
+
+    public init(
+        activeTool: DrawingToolKind = .pen,
+        previousInkingTool: DrawingToolKind = .pen,
+        penColor: InkColorPreset = .primary,
+        penWidth: CGFloat = 3.0,
+        penOpacity: CGFloat = 1.0,
+        highlighterColor: InkColorPreset = .yellow,
+        highlighterWidth: CGFloat = 18.0,
+        highlighterOpacity: CGFloat = 0.45,
+        eraserMode: EraserMode = .object,
+        eraserWidth: CGFloat = 16.0,
+        isRulerActive: Bool = false,
+        allowsFingerDrawing: Bool = false
+    ) {
+        self.activeTool = activeTool
+        self.previousInkingTool = (previousInkingTool == .eraser) ? .pen : previousInkingTool
+        self.penColor = penColor
+        self.penWidth = Self.clamp(penWidth, to: Self.widthRange)
+        self.penOpacity = Self.clamp(penOpacity, to: Self.opacityRange)
+        self.highlighterColor = highlighterColor
+        self.highlighterWidth = Self.clamp(highlighterWidth, to: Self.highlighterWidthRange)
+        self.highlighterOpacity = Self.clamp(highlighterOpacity, to: Self.opacityRange)
+        self.eraserMode = eraserMode
+        self.eraserWidth = Self.clamp(eraserWidth, to: Self.eraserWidthRange)
+        self.isRulerActive = isRulerActive
+        self.allowsFingerDrawing = allowsFingerDrawing
+    }
+
+    /// Selects a tool and records `previousInkingTool` whenever `.pen` or `.highlighter` is chosen.
+    public mutating func selectTool(_ tool: DrawingToolKind) {
+        if activeTool != .eraser {
+            previousInkingTool = activeTool
+        }
+        activeTool = tool
+        if tool != .eraser {
+            previousInkingTool = tool
+        }
+    }
+
+    /// Handles the Apple Pencil double-tap action:
+    /// - If currently using Pen or Highlighter, switches to Rubber (Eraser).
+    /// - If already using Rubber, switches back to the previous inking tool (Pen or Highlighter).
+    public mutating func handlePencilDoubleTapToggleEraser() {
+        if activeTool == .eraser {
+            activeTool = previousInkingTool
+        } else {
+            previousInkingTool = activeTool
+            activeTool = .eraser
+        }
+    }
+
+    public mutating func toggleRuler() {
+        isRulerActive.toggle()
+    }
+
+    public mutating func setPenWidth(_ width: CGFloat) {
+        penWidth = Self.clamp(width, to: Self.widthRange)
+    }
+
+    public mutating func setPenOpacity(_ opacity: CGFloat) {
+        penOpacity = Self.clamp(opacity, to: Self.opacityRange)
+    }
+
+    public mutating func setHighlighterWidth(_ width: CGFloat) {
+        highlighterWidth = Self.clamp(width, to: Self.highlighterWidthRange)
+    }
+
+    public mutating func setHighlighterOpacity(_ opacity: CGFloat) {
+        highlighterOpacity = Self.clamp(opacity, to: Self.opacityRange)
+    }
+
+    public mutating func setEraserWidth(_ width: CGFloat) {
+        eraserWidth = Self.clamp(width, to: Self.eraserWidthRange)
+    }
+
+    /// Number of touches required for page-turn swipe gestures so 1-finger drawing never triggers accidental page turns.
+    public var minimumTouchCountForNavigationSwipes: Int {
+        allowsFingerDrawing ? 2 : 1
+    }
+
+    private static func clamp(_ value: CGFloat, to range: ClosedRange<CGFloat>) -> CGFloat {
+        Swift.min(Swift.max(value, range.lowerBound), range.upperBound)
+    }
+}

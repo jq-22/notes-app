@@ -3,10 +3,9 @@
 //  Notes
 //
 //  Responsibility: Hosts `PencilCanvasScrollView` for the selected A4 portrait page and provides toolbar controls for:
-//    - Overriding the page's paper type (lined / squared / blank, or inheriting notebook default)
-//    - Toggling Scribble-to-Erase on or off
-//    - Adding a new page immediately below the current page
-//  Dependencies: SwiftUI, Domain, DesignSystem, LibraryViewModel, PencilCanvasScrollView.
+//    - Top-left: Full-Screen sidebar toggle + Undo and Redo stroke buttons
+//    - Top-right: Compact 4-Tool Menu Button (Pen, Highlighter, Rubber, Ruler), Page Paper style picker, Add Page Below, and Settings menu (Scribble-to-Erase toggle + Draw with Finger toggle when no Apple Pencil is used).
+//  Dependencies: SwiftUI, Domain, DesignSystem, LibraryViewModel, PencilCanvasScrollView, DrawingToolMenuButton.
 //
 
 import SwiftUI
@@ -18,6 +17,11 @@ public struct PageEditorView: View {
     let page: Page
     let isFullScreen: Bool
     let onToggleFullScreen: () -> Void
+
+    @State private var canUndo: Bool = false
+    @State private var canRedo: Bool = false
+    @State private var undoTriggerCount: Int = 0
+    @State private var redoTriggerCount: Int = 0
 
     public init(
         viewModel: LibraryViewModel,
@@ -51,9 +55,24 @@ public struct PageEditorView: View {
             pageID: page.id,
             paperType: effectivePaper,
             initialDrawingData: viewModel.loadDrawingData(for: page.id),
+            toolState: viewModel.toolState,
             isScribbleToEraseEnabled: viewModel.isScribbleToEraseEnabled,
+            undoTriggerCount: undoTriggerCount,
+            redoTriggerCount: redoTriggerCount,
             onDrawingChanged: { updatedData in
                 viewModel.scheduleDrawingAutosave(updatedData, for: page.id)
+            },
+            onUndoStateChanged: { updatedCanUndo, updatedCanRedo in
+                canUndo = updatedCanUndo
+                canRedo = updatedCanRedo
+            },
+            onPencilDoubleTap: {
+                viewModel.toolState.handlePencilDoubleTapToggleEraser()
+            },
+            onPencilDetected: {
+                if viewModel.toolState.allowsFingerDrawing {
+                    viewModel.toolState.allowsFingerDrawing = false
+                }
             },
             onSwipeToNextPage: {
                 viewModel.goToNextOrCreatePage()
@@ -76,30 +95,25 @@ public struct PageEditorView: View {
                 .help(isFullScreen ? "Show sidebar menus" : "Hide sidebars for full-screen writing")
 
                 Button {
-                    viewModel.goToPreviousPage()
+                    undoTriggerCount += 1
                 } label: {
-                    Label("Previous Page", systemImage: "chevron.left")
+                    Label("Undo", systemImage: "arrow.uturn.backward")
                 }
-                .disabled(!viewModel.canGoToPreviousPage)
-                .help("Go to previous page (or swipe right)")
+                .disabled(!canUndo)
+                .help("Undo last stroke or change")
 
                 Button {
-                    viewModel.goToNextOrCreatePage()
+                    redoTriggerCount += 1
                 } label: {
-                    Label("Next / New Page", systemImage: "chevron.right")
+                    Label("Redo", systemImage: "arrow.uturn.forward")
                 }
-                .help("Go to next page or create a new page (or swipe left)")
+                .disabled(!canRedo)
+                .help("Redo stroke or change")
             }
 
             ToolbarItemGroup(placement: .topBarTrailing) {
-                Toggle(isOn: $viewModel.isScribbleToEraseEnabled) {
-                    Label(
-                        "Scribble to Erase",
-                        systemImage: viewModel.isScribbleToEraseEnabled ? "scribble.variable" : "scribble"
-                    )
-                }
-                .toggleStyle(.button)
-                .help("Toggle Scribble-to-Erase gesture")
+                // Compact 4-Tool Popover Button (Pen >, Highlighter >, Rubber >, Ruler)
+                DrawingToolMenuButton(toolState: $viewModel.toolState)
 
                 Menu {
                     Picker(
@@ -139,6 +153,19 @@ public struct PageEditorView: View {
                     Label("Add Page Below", systemImage: "doc.badge.plus")
                 }
                 .help("Add a new page below the current page")
+
+                Menu {
+                    Toggle(isOn: $viewModel.isScribbleToEraseEnabled) {
+                        Label("Scribble to Erase", systemImage: "scribble.variable")
+                    }
+
+                    Toggle(isOn: $viewModel.toolState.allowsFingerDrawing) {
+                        Label("Draw with Finger (No Pencil)", systemImage: "hand.point.up.left")
+                    }
+                } label: {
+                    Label("Editor Settings", systemImage: "ellipsis.circle")
+                }
+                .help("Drawing & Apple Pencil Settings")
             }
         }
     }

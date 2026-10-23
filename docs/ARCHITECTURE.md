@@ -15,24 +15,28 @@ Notes/
     NoteSection.swift                 Section value type holding ordered [Page] & pure move/insert/delete logic
     Notebook.swift                    Root aggregate holding ordered [NoteSection] and default PaperType
     ScribbleClassifier.swift          Pure geometric scribble-to-erase classifier with named threshold constants
+    DrawingToolState.swift            Pure value model for the 4-tool menu (Pen, Highlighter, Rubber, Ruler), widths/opacities/colours, Pencil double-tap, and finger/pencil input policy
   Persistence/                        Storage boundary & implementation (depends on Domain + Foundation only)
     PageStore.swift                   PageStore protocol + PageStoreError
     FilePageStore.swift               Atomic file persistence (notebooks.json + Drawings/<page-uuid>.pkdrawing)
   Features/
     Library/
       LibraryViewModel.swift          @Observable @MainActor state, CRUD, debounced drawing autosave, & error surfacing
-      LibraryRootView.swift           3-column NavigationSplitView (Notebooks -> Sections & Pages -> Detail)
+      LibraryRootView.swift           3-column NavigationSplitView (Notebooks -> Sections & Pages -> Detail) + multi-page selection
       PageThumbnailView.swift         A4 aspect-ratio sidebar thumbnail showing paper pattern, live PKDrawing preview, & page index
+      PagePDFExporter.swift           Multi-page A4 vector PDF exporter rendering paper background + PKDrawing strokes
     PageEditor/
       PaperBackgroundView.swift       SwiftUI Canvas drawing lined/squared/blank background layer (never touches ink)
-      PencilCanvasScrollView.swift    UIKit UIScrollView (1x-5x zoom) + PKCanvasView + 4-tool PKToolPicker + scribble-to-erase
-      PageEditorView.swift            Page editor container with toolbar controls (scribble toggle, paper picker, add page below)
+      PencilCanvasScrollView.swift    UIKit UIScrollView (1x-5x sharp zoom) + PKCanvasView + UIPencilInteraction double-tap + scribble-to-erase
+      DrawingToolMenuButton.swift     Compact top-bar tool button & popover matching owner's 4-row sketch (Pen >, Highlighter >, Rubber >, Ruler)
+      PageEditorView.swift            Page editor container with toolbar controls (Full Screen, Undo/Redo, 4-Tool menu, paper picker, settings)
   DesignSystem/
     Theme.swift                       Centralized colours, spacing, fonts, and corner radii (light/dark adaptive)
 NotesTests/
   Domain/
     NotebookHierarchyTests.swift      Unit tests for Notebook, NoteSection, Page, PaperType
     ScribbleClassifierTests.swift     Synthetic stroke unit tests (scribble, straight line, circle, zigzag 'W'/'M', overlap, toggle)
+    DrawingToolStateTests.swift       Unit tests for 4-tool state, Apple Pencil double-tap toggle, clamping, and input policy touch counts
   Persistence/
     FilePageStoreTests.swift          Unit tests for FilePageStore round-trip, drawing separation, and error paths
   Features/

@@ -50,6 +50,15 @@ public final class LibraryViewModel {
         }
     }
 
+    /// Current tool selection, widths, opacities, colours, ruler toggle, and finger/pencil input policy (persisted in UserDefaults).
+    public var toolState: DrawingToolState {
+        didSet {
+            if let encoded = try? JSONEncoder().encode(toolState) {
+                UserDefaults.standard.set(encoded, forKey: Self.toolStateDefaultsKey)
+            }
+        }
+    }
+
     /// Monotonically incremented each time a page's drawing data is saved so sidebar thumbnails refresh.
     public private(set) var drawingRevisionByPageID: [UUID: Int] = [:]
 
@@ -58,6 +67,7 @@ public final class LibraryViewModel {
     private let autosaveDebounceNanoseconds: UInt64
 
     public static let scribbleEnabledDefaultsKey = "Notes.isScribbleToEraseEnabled"
+    public static let toolStateDefaultsKey = "Notes.drawingToolState"
 
     public init(
         store: PageStore,
@@ -70,6 +80,12 @@ public final class LibraryViewModel {
             self.isScribbleToEraseEnabled = true
         } else {
             self.isScribbleToEraseEnabled = UserDefaults.standard.bool(forKey: Self.scribbleEnabledDefaultsKey)
+        }
+        if let savedToolData = UserDefaults.standard.data(forKey: Self.toolStateDefaultsKey),
+           let decodedToolState = try? JSONDecoder().decode(DrawingToolState.self, from: savedToolData) {
+            self.toolState = decodedToolState
+        } else {
+            self.toolState = DrawingToolState()
         }
         if loadImmediately {
             loadFromStore()
