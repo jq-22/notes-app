@@ -74,6 +74,23 @@ public struct NoteSection: Identifiable, Codable, Equatable, Hashable, Sendable 
         return removed
     }
 
+    @discardableResult
+    public mutating func deletePages(ids pageIDs: Set<UUID>, now: Date = Date()) -> [Page] {
+        guard !pageIDs.isEmpty else { return [] }
+        var removed: [Page] = []
+        pages.removeAll { page in
+            if pageIDs.contains(page.id) {
+                removed.append(page)
+                return true
+            }
+            return false
+        }
+        if !removed.isEmpty {
+            updatedAt = now
+        }
+        return removed
+    }
+
     public mutating func movePages(fromOffsets source: IndexSet, toOffset destination: Int, now: Date = Date()) {
         pages.moveElements(fromOffsets: source, toOffset: destination)
         updatedAt = now

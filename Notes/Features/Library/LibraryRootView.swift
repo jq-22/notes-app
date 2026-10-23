@@ -7,10 +7,11 @@
 //    2. Content: Sections & Pages inside the selected notebook (create, rename, reorder, delete with confirmation, page thumbnails)
 //    3. Detail: Selected A4 page view with paper background & page controls.
 //  Also observes scenePhase to flush any pending state when the app backgrounds, and presents save/load errors via alert.
-//  Dependencies: SwiftUI, Domain, DesignSystem, LibraryViewModel, PageThumbnailView, PageEditorView.
+//  Dependencies: SwiftUI, UIKit, Domain, DesignSystem, LibraryViewModel, PageThumbnailView, PageEditorView, PagePDFExporter.
 //
 
 import SwiftUI
+import UIKit
 
 public struct LibraryRootView: View {
     @Bindable var viewModel: LibraryViewModel
@@ -24,6 +25,13 @@ public struct LibraryRootView: View {
 
     // Delete confirmation state
     @State private var deleteTarget: DeleteTarget?
+
+    // Multi-page selection mode state
+    @State private var isSelectingPages: Bool = false
+    @State private var selectedPageIDsForBatch: Set<UUID> = []
+
+    // Share PDF sheet state
+    @State private var sharedPDFItem: SharedPDFItem?
 
     public init(viewModel: LibraryViewModel) {
         self.viewModel = viewModel
@@ -41,6 +49,14 @@ public struct LibraryRootView: View {
             if newPhase == .background || newPhase == .inactive {
                 viewModel.saveNow()
             }
+        }
+        .onChange(of: viewModel.selectedSectionID) { _, _ in
+            isSelectingPages = false
+            selectedPageIDsForBatch.removeAll()
+        }
+        .sheet(item: $sharedPDFItem) { item in
+            ActivityShareSheet(activityItems: [item.url])
+                .presentationDetents([.medium, .large])
         }
         .alert(
             "Rename \(renameTarget?.kindLabel ?? "Item")",
@@ -322,156 +338,218 @@ public struct LibraryRootView: View {
     @ViewBuilder
     private func pagesList(for notebook: Notebook) -> some View {
         if let section = viewModel.selectedSection {
-            List(selection: $viewModel.selectedPageID) {
-                Section {
-                    ForEach(Array(section.pages.enumerated()), id: \.element.id) { index, page in
-                        let effectivePaper = page.effectivePaperType(notebookDefault: notebook.defaultPaperType)
-                        let _ = viewModel.drawingRevisionByPageID[page.id]
-                        HStack(spacing: Theme.Spacing.medium) {
-                            PageThumbnailView(
-                                paperType: effectivePaper,
-                                drawingData: viewModel.loadDrawingData(for: page.id),
-                                pageNumber: index + 1,
-                                isSelected: viewModel.selectedPageID == page.id
-                            )
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(page.title)
-                                    .font(Theme.Fonts.rowTitle)
-                                HStack(spacing: 4) {
-                                    Image(systemName: effectivePaper.systemImageName)
-                                    Text(effectivePaper.displayName)
-                                    if page.paperTypeOverride != nil {
-                                        Text("(Custom)")
-                                    }
+            VStack(spacing: 0) {
+                List(
+                    selection: isSelectingPages
+                        ? $selectedPageIDsForBatch
+                        : Binding<Set<UUID>>(
+                            get: { viewModel.selectedPageID.map { [$0] } ?? [] },
+                            set: { newSet in
+                                if let first = newSet.first {
+                                    viewModel.selectedPageID = first
                                 }
-                                .font(Theme.Fonts.rowSubtitle)
-                                .foregroundStyle(.secondary)
                             }
-                        }
-                        .padding(.vertical, 2)
-                        .tag(page.id)
-                        .contextMenu {
-                            Button {
-                                viewModel.createPage(
-                                    in: section.id,
-                                    notebookID: notebook.id,
-                                    afterPageID: page.id
+                        )
+                ) {
+                    Section {
+                        ForEach(Array(section.pages.enumerated()), id: \.element.id) { index, page in
+                            let effectivePaper = page.effectivePaperType(notebookDefault: notebook.defaultPaperType)
+                            let _ = viewModel.drawingRevisionByPageID[page.id]
+                            HStack(spacing: Theme.Spacing.medium) {
+                                PageThumbnailView(
+                                    paperType: effectivePaper,
+                                    drawingData: viewModel.loadDrawingData(for: page.id),
+                                    pageNumber: index + 1,
+                                    isSelected: isSelectingPages
+                                        ? selectedPageIDsForBatch.contains(page.id)
+                                        : (viewModel.selectedPageID == page.id)
                                 )
-                            } label: {
-                                Label("Add Page Below", systemImage: "doc.badge.plus")
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(page.title)
+                                        .font(Theme.Fonts.rowTitle)
+                                    HStack(spacing: 4) {
+                                        Image(systemName: effectivePaper.systemImageName)
+                                        Text(effectivePaper.displayName)
+                                        if page.paperTypeOverride != nil {
+                                            Text("(Custom)")
+                                        }
+                                    }
+                                    .font(Theme.Fonts.rowSubtitle)
+                                    .foregroundStyle(.secondary)
+                                }
                             }
-
-                            Button {
-                                beginRename(.page(notebookID: notebook.id, sectionID: section.id, pageID: page.id, currentTitle: page.title))
-                            } label: {
-                                Label("Rename Page", systemImage: "pencil")
-                            }
-
-                            Menu {
+                            .padding(.vertical, 2)
+                            .tag(page.id)
+                            .contextMenu {
                                 Button {
-                                    viewModel.setPagePaperTypeOverride(
-                                        id: page.id,
+                                    viewModel.createPage(
                                         in: section.id,
                                         notebookID: notebook.id,
-                                        to: nil
+                                        afterPageID: page.id
                                     )
                                 } label: {
-                                    if page.paperTypeOverride == nil {
-                                        Label("Notebook Default (\(notebook.defaultPaperType.displayName))", systemImage: "checkmark")
-                                    } else {
-                                        Text("Notebook Default (\(notebook.defaultPaperType.displayName))")
-                                    }
+                                    Label("Add Page Below", systemImage: "doc.badge.plus")
                                 }
-                                Divider()
-                                ForEach(PaperType.allCases) { paper in
+
+                                Button {
+                                    beginRename(.page(notebookID: notebook.id, sectionID: section.id, pageID: page.id, currentTitle: page.title))
+                                } label: {
+                                    Label("Rename Page", systemImage: "pencil")
+                                }
+
+                                Menu {
                                     Button {
                                         viewModel.setPagePaperTypeOverride(
                                             id: page.id,
                                             in: section.id,
                                             notebookID: notebook.id,
-                                            to: paper
+                                            to: nil
                                         )
                                     } label: {
-                                        if page.paperTypeOverride == paper {
-                                            Label(paper.displayName, systemImage: "checkmark")
+                                        if page.paperTypeOverride == nil {
+                                            Label("Notebook Default (\(notebook.defaultPaperType.displayName))", systemImage: "checkmark")
                                         } else {
-                                            Label(paper.displayName, systemImage: paper.systemImageName)
+                                            Text("Notebook Default (\(notebook.defaultPaperType.displayName))")
                                         }
                                     }
+                                    Divider()
+                                    ForEach(PaperType.allCases) { paper in
+                                        Button {
+                                            viewModel.setPagePaperTypeOverride(
+                                                id: page.id,
+                                                in: section.id,
+                                                notebookID: notebook.id,
+                                                to: paper
+                                            )
+                                        } label: {
+                                            if page.paperTypeOverride == paper {
+                                                Label(paper.displayName, systemImage: "checkmark")
+                                            } else {
+                                                Label(paper.displayName, systemImage: paper.systemImageName)
+                                            }
+                                        }
+                                    }
+                                } label: {
+                                    Label("Paper Style", systemImage: effectivePaper.systemImageName)
                                 }
-                            } label: {
-                                Label("Paper Style", systemImage: effectivePaper.systemImageName)
+
+                                Button {
+                                    sharePagesAsPDF(pages: [page], in: notebook, fileNameTitle: page.title)
+                                } label: {
+                                    Label("Share Page (PDF)", systemImage: "square.and.arrow.up")
+                                }
+
+                                Button {
+                                    isSelectingPages = true
+                                    selectedPageIDsForBatch = [page.id]
+                                } label: {
+                                    Label("Select Pages", systemImage: "checkmark.circle")
+                                }
+
+                                if notebook.sections.count > 1 {
+                                    Menu {
+                                        ForEach(notebook.sections.filter { $0.id != section.id }) { targetSection in
+                                            Button {
+                                                viewModel.movePages(
+                                                    ids: [page.id],
+                                                    fromSectionID: section.id,
+                                                    toSectionID: targetSection.id,
+                                                    in: notebook.id
+                                                )
+                                            } label: {
+                                                Label(targetSection.title, systemImage: "folder")
+                                            }
+                                        }
+                                    } label: {
+                                        Label("Move to Section", systemImage: "folder.badge.gearshape")
+                                    }
+                                }
+
+                                Divider()
+
+                                Button(role: .destructive) {
+                                    deleteTarget = .page(
+                                        notebookID: notebook.id,
+                                        sectionID: section.id,
+                                        pageID: page.id,
+                                        title: page.title
+                                    )
+                                } label: {
+                                    Label("Delete Page", systemImage: "trash")
+                                }
                             }
-
-                            Divider()
-
-                            Button(role: .destructive) {
-                                deleteTarget = .page(
-                                    notebookID: notebook.id,
-                                    sectionID: section.id,
-                                    pageID: page.id,
-                                    title: page.title
-                                )
-                            } label: {
-                                Label("Delete Page", systemImage: "trash")
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button(role: .destructive) {
+                                    deleteTarget = .page(
+                                        notebookID: notebook.id,
+                                        sectionID: section.id,
+                                        pageID: page.id,
+                                        title: page.title
+                                    )
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                                Button {
+                                    beginRename(.page(notebookID: notebook.id, sectionID: section.id, pageID: page.id, currentTitle: page.title))
+                                } label: {
+                                    Label("Rename", systemImage: "pencil")
+                                }
+                                .tint(.blue)
                             }
                         }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button(role: .destructive) {
-                                deleteTarget = .page(
-                                    notebookID: notebook.id,
-                                    sectionID: section.id,
-                                    pageID: page.id,
-                                    title: page.title
-                                )
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                            Button {
-                                beginRename(.page(notebookID: notebook.id, sectionID: section.id, pageID: page.id, currentTitle: page.title))
-                            } label: {
-                                Label("Rename", systemImage: "pencil")
-                            }
-                            .tint(.blue)
-                        }
-                    }
-                    .onMove { source, destination in
-                        viewModel.movePages(
-                            in: section.id,
-                            notebookID: notebook.id,
-                            fromOffsets: source,
-                            toOffset: destination
-                        )
-                    }
-                } header: {
-                    HStack {
-                        Text("Pages in \(section.title)")
-                        Spacer()
-                        Button {
-                            viewModel.createPage(
+                        .onMove { source, destination in
+                            viewModel.movePages(
                                 in: section.id,
                                 notebookID: notebook.id,
-                                afterPageID: viewModel.selectedPageID
+                                fromOffsets: source,
+                                toOffset: destination
                             )
-                        } label: {
-                            Label("Add Page", systemImage: "plus.circle")
-                                .labelStyle(.iconOnly)
+                        }
+                    } header: {
+                        HStack {
+                            Text("Pages in \(section.title)")
+                            Spacer()
+                            if !section.pages.isEmpty {
+                                Button(isSelectingPages ? "Done" : "Select") {
+                                    isSelectingPages.toggle()
+                                    if !isSelectingPages {
+                                        selectedPageIDsForBatch.removeAll()
+                                    }
+                                }
+                                .font(Theme.Fonts.rowSubtitle)
+                            }
+                            Button {
+                                viewModel.createPage(
+                                    in: section.id,
+                                    notebookID: notebook.id,
+                                    afterPageID: viewModel.selectedPageID
+                                )
+                            } label: {
+                                Label("Add Page", systemImage: "plus.circle")
+                                    .labelStyle(.iconOnly)
+                            }
                         }
                     }
                 }
-            }
-            .overlay {
-                if section.pages.isEmpty {
-                    ContentUnavailableView {
-                        Label("No Pages", systemImage: "doc")
-                    } description: {
-                        Text("Add a page to \(section.title).")
-                    } actions: {
-                        Button("New Page") {
-                            viewModel.createPage(in: section.id, notebookID: notebook.id)
+                .environment(\.editMode, .constant(isSelectingPages ? .active : .inactive))
+                .overlay {
+                    if section.pages.isEmpty {
+                        ContentUnavailableView {
+                            Label("No Pages", systemImage: "doc")
+                        } description: {
+                            Text("Add a page to \(section.title).")
+                        } actions: {
+                            Button("New Page") {
+                                viewModel.createPage(in: section.id, notebookID: notebook.id)
+                            }
+                            .buttonStyle(.borderedProminent)
                         }
-                        .buttonStyle(.borderedProminent)
                     }
+                }
+
+                if isSelectingPages {
+                    Divider()
+                    multiSelectActionBar(for: notebook, section: section)
                 }
             }
         } else {
@@ -485,6 +563,89 @@ public struct LibraryRootView: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
+        }
+    }
+
+    // MARK: - Multi-Select Bar & PDF Share
+
+    private func multiSelectActionBar(for notebook: Notebook, section: NoteSection) -> some View {
+        let selectedOrderedPages = section.pages.filter { selectedPageIDsForBatch.contains($0.id) }
+        let count = selectedOrderedPages.count
+        let otherSections = notebook.sections.filter { $0.id != section.id }
+
+        return HStack(spacing: Theme.Spacing.medium) {
+            Text("\(count) selected")
+                .font(Theme.Fonts.rowSubtitle)
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            Button {
+                let title = count == 1
+                    ? (selectedOrderedPages.first?.title ?? section.title)
+                    : "\(notebook.title) - \(section.title) (\(count) Pages)"
+                sharePagesAsPDF(pages: selectedOrderedPages, in: notebook, fileNameTitle: title)
+            } label: {
+                Label("Share PDF", systemImage: "square.and.arrow.up")
+            }
+            .disabled(count == 0)
+
+            Menu {
+                if otherSections.isEmpty {
+                    Text("Create another section to move pages")
+                } else {
+                    ForEach(otherSections) { targetSection in
+                        Button {
+                            viewModel.movePages(
+                                ids: selectedPageIDsForBatch,
+                                fromSectionID: section.id,
+                                toSectionID: targetSection.id,
+                                in: notebook.id
+                            )
+                            selectedPageIDsForBatch.removeAll()
+                            isSelectingPages = false
+                        } label: {
+                            Label(targetSection.title, systemImage: "folder")
+                        }
+                    }
+                }
+            } label: {
+                Label("Move", systemImage: "folder")
+            }
+            .disabled(count == 0 || otherSections.isEmpty)
+
+            Button(role: .destructive) {
+                deleteTarget = .pages(
+                    notebookID: notebook.id,
+                    sectionID: section.id,
+                    pageIDs: selectedPageIDsForBatch
+                )
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            .disabled(count == 0)
+        }
+        .font(Theme.Fonts.rowSubtitle)
+        .padding(.horizontal, Theme.Spacing.medium)
+        .padding(.vertical, Theme.Spacing.small)
+        .background(.bar)
+    }
+
+    private func sharePagesAsPDF(pages: [Page], in notebook: Notebook, fileNameTitle: String) {
+        guard !pages.isEmpty else { return }
+        viewModel.flushPendingDrawings()
+        let inputs = pages.map { page in
+            ExportablePageInput(
+                page: page,
+                effectivePaperType: page.effectivePaperType(notebookDefault: notebook.defaultPaperType),
+                drawingData: viewModel.loadDrawingData(for: page.id)
+            )
+        }
+        do {
+            let pdfURL = try PagePDFExporter.exportPDF(pages: inputs, fileNameTitle: fileNameTitle)
+            sharedPDFItem = SharedPDFItem(url: pdfURL)
+        } catch {
+            viewModel.activeErrorMessage = "Could not generate PDF: \(error.localizedDescription)"
         }
     }
 
@@ -542,8 +703,27 @@ public struct LibraryRootView: View {
             viewModel.deleteSection(id: sectionID, in: notebookID)
         case .page(let notebookID, let sectionID, let pageID, _):
             viewModel.deletePage(id: pageID, in: sectionID, notebookID: notebookID)
+        case .pages(let notebookID, let sectionID, let pageIDs):
+            viewModel.deletePages(ids: pageIDs, in: sectionID, notebookID: notebookID)
+            selectedPageIDsForBatch.removeAll()
+            isSelectingPages = false
         }
     }
+}
+
+private struct SharedPDFItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+private struct ActivityShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 // MARK: - Supporting Dialog Types
@@ -583,12 +763,14 @@ private enum DeleteTarget: Identifiable {
     case notebook(id: UUID, title: String)
     case section(notebookID: UUID, sectionID: UUID, title: String)
     case page(notebookID: UUID, sectionID: UUID, pageID: UUID, title: String)
+    case pages(notebookID: UUID, sectionID: UUID, pageIDs: Set<UUID>)
 
     var id: String {
         switch self {
         case .notebook(let id, _): return "notebook-\(id.uuidString)"
         case .section(_, let sectionID, _): return "section-\(sectionID.uuidString)"
         case .page(_, _, let pageID, _): return "page-\(pageID.uuidString)"
+        case .pages(_, let sectionID, let pageIDs): return "pages-\(sectionID.uuidString)-\(pageIDs.count)"
         }
     }
 
@@ -598,6 +780,8 @@ private enum DeleteTarget: Identifiable {
              .section(_, _, let title),
              .page(_, _, _, let title):
             return title
+        case .pages(_, _, let pageIDs):
+            return "\(pageIDs.count) Page\(pageIDs.count == 1 ? "" : "s")"
         }
     }
 
@@ -606,6 +790,7 @@ private enum DeleteTarget: Identifiable {
         case .notebook: return "Delete Notebook?"
         case .section: return "Delete Section?"
         case .page: return "Delete Page?"
+        case .pages(_, _, let pageIDs): return "Delete \(pageIDs.count) Page\(pageIDs.count == 1 ? "" : "s")?"
         }
     }
 
@@ -617,6 +802,8 @@ private enum DeleteTarget: Identifiable {
             return "Deleting \"\(title)\" will permanently remove all pages inside this section."
         case .page(_, _, _, let title):
             return "Deleting \"\(title)\" cannot be undone."
+        case .pages(_, _, let pageIDs):
+            return "Deleting \(pageIDs.count) selected page\(pageIDs.count == 1 ? "" : "s") cannot be undone."
         }
     }
 }

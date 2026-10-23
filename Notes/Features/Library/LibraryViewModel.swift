@@ -463,6 +463,74 @@ public final class LibraryViewModel {
         }
     }
 
+    /// Deletes multiple pages by UUID from the specified section and cleans up their stored drawings.
+    public func deletePages(
+        ids pageIDs: Set<UUID>,
+        in sectionID: UUID? = nil,
+        notebookID: UUID? = nil
+    ) {
+        guard !pageIDs.isEmpty,
+              let targetNotebookID = notebookID ?? selectedNotebookID,
+              let notebookIndex = notebooks.firstIndex(where: { $0.id == targetNotebookID }),
+              let targetSectionID = sectionID ?? selectedSectionID,
+              let sectionIndex = notebooks[notebookIndex].sections.firstIndex(where: { $0.id == targetSectionID }) else {
+            return
+        }
+
+        let removed = notebooks[notebookIndex].sections[sectionIndex].deletePages(ids: pageIDs)
+        guard !removed.isEmpty else { return }
+
+        let removedIDs = removed.map(\.id)
+        for pid in removedIDs {
+            debounceSaveTasks[pid]?.cancel()
+            debounceSaveTasks.removeValue(forKey: pid)
+            pendingDrawingByPageID.removeValue(forKey: pid)
+        }
+        notebooks[notebookIndex].updatedAt = Date()
+
+        if let currentPageID = selectedPageID, pageIDs.contains(currentPageID) {
+            ensureValidPageSelection()
+        }
+
+        saveNow()
+        do {
+            try store.deleteDrawingData(for: removedIDs)
+        } catch {
+            activeErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    /// Moves a set of pages (preserving their relative order from the source section) to the end of `destinationSectionID`.
+    public func movePages(
+        ids pageIDs: Set<UUID>,
+        fromSectionID sourceSectionID: UUID? = nil,
+        toSectionID destinationSectionID: UUID,
+        in notebookID: UUID? = nil
+    ) {
+        guard !pageIDs.isEmpty,
+              let targetNotebookID = notebookID ?? selectedNotebookID,
+              let notebookIndex = notebooks.firstIndex(where: { $0.id == targetNotebookID }),
+              let resolvedSourceSectionID = sourceSectionID ?? selectedSectionID,
+              resolvedSourceSectionID != destinationSectionID,
+              let sourceIndex = notebooks[notebookIndex].sections.firstIndex(where: { $0.id == resolvedSourceSectionID }),
+              let destIndex = notebooks[notebookIndex].sections.firstIndex(where: { $0.id == destinationSectionID }) else {
+            return
+        }
+
+        let now = Date()
+        let pagesToMove = notebooks[notebookIndex].sections[sourceIndex].pages.filter { pageIDs.contains($0.id) }
+        guard !pagesToMove.isEmpty else { return }
+
+        _ = notebooks[notebookIndex].sections[sourceIndex].deletePages(ids: pageIDs, now: now)
+        notebooks[notebookIndex].sections[destIndex].pages.append(contentsOf: pagesToMove)
+        notebooks[notebookIndex].sections[destIndex].updatedAt = now
+        notebooks[notebookIndex].updatedAt = now
+
+        selectedSectionID = destinationSectionID
+        selectedPageID = pagesToMove.first?.id
+        saveNow()
+    }
+
     // MARK: - Selection Helpers
 
     private func ensureValidSectionAndPageSelection() {

@@ -172,4 +172,40 @@ struct LibraryViewModelTests {
         #expect(vm.notebooks[0].sections[0].pages.count == 2)
         #expect(notebook.id == vm.selectedNotebookID)
     }
+
+    @Test("Multi-page selection supports moving pages between sections, batch deleting, and PDF export")
+    func multiPageBatchMoveDeleteAndPDFExport() throws {
+        let store = InMemoryPageStore()
+        let vm = LibraryViewModel(store: store)
+
+        let notebook = vm.createNotebook(title: "Engineering")
+        let sec1ID = try #require(vm.selectedSectionID)
+        let p1ID = try #require(vm.selectedPageID)
+        let p2 = try #require(vm.createPage(in: sec1ID, notebookID: notebook.id, afterPageID: p1ID, title: "Page 2"))
+        let p3 = try #require(vm.createPage(in: sec1ID, notebookID: notebook.id, afterPageID: p2.id, title: "Page 3"))
+
+        let sec2 = try #require(vm.createSection(in: notebook.id, title: "Section 2"))
+
+        // Move Page 1 and Page 3 from Section 1 to Section 2
+        vm.movePages(ids: [p1ID, p3.id], fromSectionID: sec1ID, toSectionID: sec2.id, in: notebook.id)
+        #expect(vm.notebooks[0].sections[0].pages.map(\.id) == [p2.id])
+        #expect(vm.notebooks[0].sections[1].pages.contains(where: { $0.id == p1ID }))
+        #expect(vm.notebooks[0].sections[1].pages.contains(where: { $0.id == p3.id }))
+
+        // Export those two moved pages to a PDF file
+        let pdfURL = try PagePDFExporter.exportPDF(
+            pages: [
+                ExportablePageInput(page: p2, effectivePaperType: .lined, drawingData: nil),
+                ExportablePageInput(page: p3, effectivePaperType: .squared, drawingData: nil)
+            ],
+            fileNameTitle: "Engineering Export"
+        )
+        let pdfData = try Data(contentsOf: pdfURL)
+        #expect(pdfData.count > 100)
+        try? FileManager.default.removeItem(at: pdfURL)
+
+        // Batch delete the two moved pages from Section 2
+        vm.deletePages(ids: [p1ID, p3.id], in: sec2.id, notebookID: notebook.id)
+        #expect(vm.notebooks[0].sections[1].pages.count == 1)
+    }
 }
