@@ -15,7 +15,7 @@ Notes/
     NoteSection.swift                 Section value type holding ordered [Page] & pure move/insert/delete logic
     Notebook.swift                    Root aggregate holding ordered [NoteSection] and default PaperType
     ScribbleClassifier.swift          Pure geometric scribble-to-erase classifier with named threshold constants
-    DrawingToolState.swift            Pure value model for the 4-tool menu (Pen, Highlighter, Rubber, Ruler), widths/opacities/colours, Pencil double-tap, and finger/pencil input policy
+    DrawingToolState.swift            Pure value model for the 4-tool menu (Pen, Highlighter, Rubber, Ruler), widths/opacities/colours (explicit Black & White), and Pencil double-tap
   Persistence/                        Storage boundary & implementation (depends on Domain + Foundation only)
     PageStore.swift                   PageStore protocol + PageStoreError
     FilePageStore.swift               Atomic file persistence (notebooks.json + Drawings/<page-uuid>.pkdrawing)
@@ -27,11 +27,15 @@ Notes/
       PagePDFExporter.swift           Multi-page A4 vector PDF exporter rendering paper background + PKDrawing strokes
     PageEditor/
       PaperBackgroundView.swift       SwiftUI Canvas drawing lined/squared/blank background layer (never touches ink)
-      PencilCanvasScrollView.swift    UIKit UIScrollView (1x-5x sharp zoom) + PKCanvasView + UIPencilInteraction double-tap + scribble-to-erase
+      PencilCanvasScrollView.swift    UIKit UIScrollView (fit-to-width, ±8% snap, 0.42s slide page turn) + PKCanvasView (.monoline ballpoint pen, .light style, 0.75x ruler, scribble-to-erase)
       DrawingToolMenuButton.swift     Compact top-bar tool button & popover matching owner's 4-row sketch (Pen >, Highlighter >, Rubber >, Ruler)
-      PageEditorView.swift            Page editor container with toolbar controls (Full Screen, Undo/Redo, 4-Tool menu, paper picker, settings)
+      PageEditorView.swift            Page editor container with toolbar controls (Full Screen, Undo/Redo, 4-Tool menu, Scribble toggle, paper picker)
   DesignSystem/
     Theme.swift                       Centralized colours, spacing, fonts, and corner radii (light/dark adaptive)
+  docs/
+    ARCHITECTURE.md                   Architecture map and verified build/test commands
+    Notes-v1a-Documentation.pdf       3-page visual architecture & engineering reference PDF for Milestone v1a
+    generate_v1a_pdf.swift            Reproducible CoreGraphics/AppKit generator for Notes-v1a-Documentation.pdf
 NotesTests/
   Domain/
     NotebookHierarchyTests.swift      Unit tests for Notebook, NoteSection, Page, PaperType
