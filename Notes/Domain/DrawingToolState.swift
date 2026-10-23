@@ -95,10 +95,6 @@ public struct DrawingToolState: Codable, Equatable, Sendable {
     // Ruler overlay toggle (independent of active tool)
     public var isRulerActive: Bool
 
-    // Input policy: when false (default), Pencil-only draws and 1-finger pans/swipes.
-    // When true ("Draw with Finger" in Settings, or auto-fallback when no Pencil is used), 1-finger draws and 2-fingers pan/swipe.
-    public var allowsFingerDrawing: Bool
-
     public static let widthRange: ClosedRange<CGFloat> = 1.0...24.0
     public static let highlighterWidthRange: ClosedRange<CGFloat> = 6.0...40.0
     public static let eraserWidthRange: ClosedRange<CGFloat> = 4.0...48.0
@@ -115,8 +111,7 @@ public struct DrawingToolState: Codable, Equatable, Sendable {
         highlighterOpacity: CGFloat = 0.45,
         eraserMode: EraserMode = .object,
         eraserWidth: CGFloat = 16.0,
-        isRulerActive: Bool = false,
-        allowsFingerDrawing: Bool = false
+        isRulerActive: Bool = false
     ) {
         self.activeTool = activeTool
         self.previousInkingTool = (previousInkingTool == .eraser) ? .pen : previousInkingTool
@@ -129,7 +124,6 @@ public struct DrawingToolState: Codable, Equatable, Sendable {
         self.eraserMode = eraserMode
         self.eraserWidth = Self.clamp(eraserWidth, to: Self.eraserWidthRange)
         self.isRulerActive = isRulerActive
-        self.allowsFingerDrawing = allowsFingerDrawing
     }
 
     /// Selects a tool and records `previousInkingTool` whenever `.pen` or `.highlighter` is chosen.
@@ -177,11 +171,6 @@ public struct DrawingToolState: Codable, Equatable, Sendable {
 
     public mutating func setEraserWidth(_ width: CGFloat) {
         eraserWidth = Self.clamp(width, to: Self.eraserWidthRange)
-    }
-
-    /// Number of touches required for page-turn swipe gestures so 1-finger drawing never triggers accidental page turns.
-    public var minimumTouchCountForNavigationSwipes: Int {
-        allowsFingerDrawing ? 2 : 1
     }
 
     private static func clamp(_ value: CGFloat, to range: ClosedRange<CGFloat>) -> CGFloat {

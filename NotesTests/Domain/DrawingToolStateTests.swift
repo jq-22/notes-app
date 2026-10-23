@@ -80,14 +80,4 @@ struct DrawingToolStateTests {
         #expect(state.isRulerActive == false)
         #expect(state.activeTool == .highlighter)
     }
-
-    @Test("Finger drawing mode requires 2 fingers for navigation swipes while Pencil-only mode requires 1 finger")
-    func navigationTouchCountFollowsInputPolicy() {
-        var state = DrawingToolState()
-        #expect(state.allowsFingerDrawing == false)
-        #expect(state.minimumTouchCountForNavigationSwipes == 1)
-
-        state.allowsFingerDrawing = true
-        #expect(state.minimumTouchCountForNavigationSwipes == 2)
-    }
 }

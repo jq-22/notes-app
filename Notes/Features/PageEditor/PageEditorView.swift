@@ -4,7 +4,7 @@
 //
 //  Responsibility: Hosts `PencilCanvasScrollView` for the selected A4 portrait page and provides toolbar controls for:
 //    - Top-left: Full-Screen sidebar toggle + Undo and Redo stroke buttons
-//    - Top-right: Compact 4-Tool Menu Button (Pen, Highlighter, Rubber, Ruler), Page Paper style picker, Add Page Below, and Settings menu (Scribble-to-Erase toggle + Draw with Finger toggle when no Apple Pencil is used).
+//    - Top-right: Compact 4-Tool Menu Button (Pen, Highlighter, Rubber, Ruler), Scribble-to-Erase toggle, Page Paper style picker, and Add Page Below.
 //  Dependencies: SwiftUI, Domain, DesignSystem, LibraryViewModel, PencilCanvasScrollView, DrawingToolMenuButton.
 //
 
@@ -69,11 +69,6 @@ public struct PageEditorView: View {
             onPencilDoubleTap: {
                 viewModel.toolState.handlePencilDoubleTapToggleEraser()
             },
-            onPencilDetected: {
-                if viewModel.toolState.allowsFingerDrawing {
-                    viewModel.toolState.allowsFingerDrawing = false
-                }
-            },
             onSwipeToNextPage: {
                 viewModel.goToNextOrCreatePage()
             },
@@ -115,6 +110,15 @@ public struct PageEditorView: View {
                 // Compact 4-Tool Popover Button (Pen >, Highlighter >, Rubber >, Ruler)
                 DrawingToolMenuButton(toolState: $viewModel.toolState)
 
+                Toggle(isOn: $viewModel.isScribbleToEraseEnabled) {
+                    Label(
+                        "Scribble to Erase",
+                        systemImage: viewModel.isScribbleToEraseEnabled ? "scribble.variable" : "scribble"
+                    )
+                }
+                .toggleStyle(.button)
+                .help("Toggle Scribble-to-Erase gesture")
+
                 Menu {
                     Picker(
                         "Page Paper",
@@ -153,19 +157,6 @@ public struct PageEditorView: View {
                     Label("Add Page Below", systemImage: "doc.badge.plus")
                 }
                 .help("Add a new page below the current page")
-
-                Menu {
-                    Toggle(isOn: $viewModel.isScribbleToEraseEnabled) {
-                        Label("Scribble to Erase", systemImage: "scribble.variable")
-                    }
-
-                    Toggle(isOn: $viewModel.toolState.allowsFingerDrawing) {
-                        Label("Draw with Finger (No Pencil)", systemImage: "hand.point.up.left")
-                    }
-                } label: {
-                    Label("Editor Settings", systemImage: "ellipsis.circle")
-                }
-                .help("Drawing & Apple Pencil Settings")
             }
         }
     }

@@ -102,8 +102,8 @@ public struct DrawingToolMenuButton: View {
                     eraserOptionsView
                 }
             }
-            .frame(width: 265)
-            .padding(.vertical, Theme.Spacing.small)
+            .frame(width: 195)
+            .padding(.vertical, 6)
             .presentationCompactAdaptation(.popover)
         }
     }
@@ -170,22 +170,23 @@ public struct DrawingToolMenuButton: View {
             Button {
                 toolState.toggleRuler()
             } label: {
-                HStack(spacing: Theme.Spacing.small) {
+                HStack(spacing: 6) {
                     Image(systemName: "ruler")
-                        .frame(width: 22)
+                        .font(.subheadline)
+                        .frame(width: 18)
                         .foregroundStyle(toolState.isRulerActive ? Color.accentColor : Color.primary)
                     Text("Ruler")
-                        .font(Theme.Fonts.rowTitle)
+                        .font(.subheadline)
                         .foregroundStyle(.primary)
                     Spacer()
                     if toolState.isRulerActive {
                         Image(systemName: "checkmark")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.caption2.weight(.semibold))
                             .foregroundStyle(.tint)
                     }
                 }
-                .padding(.horizontal, Theme.Spacing.medium)
-                .padding(.vertical, 10)
+                .padding(.horizontal, Theme.Spacing.small)
+                .padding(.vertical, 7)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -202,37 +203,38 @@ public struct DrawingToolMenuButton: View {
     ) -> some View {
         HStack(spacing: 0) {
             Button(action: selectAction) {
-                HStack(spacing: Theme.Spacing.small) {
+                HStack(spacing: 6) {
                     Image(systemName: icon)
-                        .frame(width: 22)
+                        .font(.subheadline)
+                        .frame(width: 18)
                         .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
                     Text(title)
-                        .font(isSelected ? Theme.Fonts.rowTitle.weight(.semibold) : Theme.Fonts.rowTitle)
+                        .font(isSelected ? .subheadline.weight(.semibold) : .subheadline)
                         .foregroundStyle(.primary)
                     if let colorBadge {
                         Circle()
                             .fill(colorBadge)
-                            .frame(width: 10, height: 10)
+                            .frame(width: 8, height: 8)
                             .overlay(Circle().stroke(Color.primary.opacity(0.2), lineWidth: 0.5))
                     }
                     Spacer()
                     if isSelected {
                         Image(systemName: "checkmark")
-                            .font(.caption.weight(.bold))
+                            .font(.caption2.weight(.bold))
                             .foregroundStyle(.tint)
                     }
                 }
-                .padding(.leading, Theme.Spacing.medium)
-                .padding(.vertical, 10)
+                .padding(.leading, Theme.Spacing.small)
+                .padding(.vertical, 7)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
             Button(action: detailAction) {
                 Image(systemName: "chevron.right")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 38, height: 38)
+                    .frame(width: 30, height: 30)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -412,7 +414,7 @@ public struct DrawingToolMenuButton: View {
     }
 
     private func colorSwatchesGrid(selected: Binding<InkColorPreset>) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 6) {
             ForEach(InkColorPreset.allCases) { preset in
                 Button {
                     selected.wrappedValue = preset
@@ -420,15 +422,15 @@ public struct DrawingToolMenuButton: View {
                     ZStack {
                         Circle()
                             .fill(preset.swiftUIColor)
-                            .frame(width: 26, height: 26)
+                            .frame(width: 19, height: 19)
                             .overlay(
                                 Circle()
                                     .stroke(Color.primary.opacity(0.25), lineWidth: 1)
                             )
                         if selected.wrappedValue == preset {
                             Circle()
-                                .stroke(Color.accentColor, lineWidth: 2.5)
-                                .frame(width: 32, height: 32)
+                                .stroke(Color.accentColor, lineWidth: 2)
+                                .frame(width: 23, height: 23)
                         }
                     }
                 }
