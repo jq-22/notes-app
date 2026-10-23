@@ -49,20 +49,18 @@ NotesTests/
 1. **`NoteSection` naming**: Named `NoteSection` in `Domain` so it never collides with SwiftUI's `Section` view builder inside `Features`.
 2. **Permanent UUIDs everywhere**: `Notebook`, `NoteSection`, and `Page` are keyed strictly by `UUID`. Reordering mutates array positions without changing UUIDs.
 3. **Pure `ScribbleClassifier` in `Domain`**: Takes `StrokeSample` and `[ExistingStrokeTarget]` (`CGPoint`/`CGRect`) so synthetic stroke tests run without a simulator or UIKit. In `PencilCanvasScrollView`, when `ScribbleClassifier` triggers, the scribble stroke and covered strokes are removed in one `undoManager` operation so a single Undo restores the erased ink.
-4. **Target configuration**: `Notes.xcodeproj` uses Xcode 16+ `PBXFileSystemSynchronizedRootGroup` (automatically picks up files added to `Notes/` and `NotesTests/`), `TARGETED_DEVICE_FAMILY = 2` (iPad only), and `IPHONEOS_DEPLOYMENT_TARGET = 26.0`.
+4. **Target configuration**: `Notes.xcodeproj` uses Xcode 16+ `PBXFileSystemSynchronizedRootGroup` (automatically picks up files added to `Notes/` and `NotesTests/`), `TARGETED_DEVICE_FAMILY = 2` (iPad only), and `IPHONEOS_DEPLOYMENT_TARGET = 26.5` (Xcode 26.6 / iPadOS 26.5 SDK).
 
 ## Verified Commands
-- **Compile & typecheck Domain + Persistence + LibraryViewModel via Command Line Tools (`swiftc`)**:
+- **Xcode Build & Test on iPad Simulator (Verified Passing)**:
+  ```bash
+  xcodebuild test -project Notes.xcodeproj -scheme Notes -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5)'
+  ```
+- **Fast Compile & Typecheck of Core Modules via `swiftc`**:
   ```bash
   swiftc -parse-as-library \
     Notes/Domain/*.swift \
     Notes/Persistence/*.swift \
     Notes/Features/Library/LibraryViewModel.swift \
     -module-name Notes -emit-module -emit-library -o /tmp/libNotes.dylib && rm -f /tmp/libNotes.dylib
-  ```
-- **Xcode Build & Test (once Xcode.app finishes installing)**:
-  ```bash
-  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-  xcrun simctl list devices available | grep -i iPad
-  xcodebuild test -project Notes.xcodeproj -scheme Notes -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M4)'
   ```
