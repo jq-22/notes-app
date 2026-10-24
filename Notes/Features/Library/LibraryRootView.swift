@@ -359,6 +359,8 @@ public struct LibraryRootView: View {
                                 PageThumbnailView(
                                     paperType: effectivePaper,
                                     drawingData: viewModel.loadDrawingData(for: page.id),
+                                    pageObjects: page.objects,
+                                    assetDataProvider: { viewModel.loadAssetData(for: $0) },
                                     pageNumber: index + 1,
                                     isSelected: isSelectingPages
                                         ? selectedPageIDsForBatch.contains(page.id)
@@ -642,7 +644,11 @@ public struct LibraryRootView: View {
             )
         }
         do {
-            let pdfURL = try PagePDFExporter.exportPDF(pages: inputs, fileNameTitle: fileNameTitle)
+            let pdfURL = try PagePDFExporter.exportPDF(
+                pages: inputs,
+                fileNameTitle: fileNameTitle,
+                assetDataProvider: { viewModel.loadAssetData(for: $0) }
+            )
             sharedPDFItem = SharedPDFItem(url: pdfURL)
         } catch {
             viewModel.activeErrorMessage = "Could not generate PDF: \(error.localizedDescription)"

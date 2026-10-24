@@ -36,9 +36,19 @@ public final class LibraryViewModel {
         willSet {
             if selectedPageID != newValue {
                 flushPendingDrawings()
+                selectedObjectID = nil
             }
         }
     }
+
+    /// Currently selected `PageObject` ID on the active page (shows resize/move/rotate handles when non-nil).
+    public var selectedObjectID: UUID?
+
+    /// Whether the user has toggled the Object Select / Pointer tool in the toolbar to tap and manipulate placed objects.
+    public var isObjectSelectModeActive: Bool = false
+
+    /// In-memory cache of loaded image asset data keyed by `assetID` for fast canvas and thumbnail rendering.
+    private var assetCacheByID: [UUID: Data] = [:]
 
     /// Non-nil when a save or load operation fails; bound to a user-visible alert.
     public var activeErrorMessage: String?
@@ -544,6 +554,173 @@ public final class LibraryViewModel {
 
         selectedSectionID = destinationSectionID
         selectedPageID = pagesToMove.first?.id
+        saveNow()
+    }
+
+    // MARK: - PageObject & Image Asset Operations (v1b)
+
+    /// Loads binary asset data (e.g. PNG/JPEG image) for `assetID`, caching it in memory.
+    public func loadAssetData(for assetID: UUID) -> Data? {
+        if let cached = assetCacheByID[assetID] {
+            return cached
+        }
+        do {
+            if let loaded = try store.loadAssetData(for: assetID) {
+                assetCacheByID[assetID] = loaded
+                return loaded
+            }
+            return nil
+        } catch {
+            activeErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Saves binary image asset data and inserts a new image `PageObject` onto the target page, selecting it immediately.
+    @discardableResult
+    public func insertImageObject(
+        imageData: Data,
+        intrinsicSize: CGSize,
+        on pageID: UUID? = nil,
+        in sectionID: UUID? = nil,
+        notebookID: UUID? = nil
+    ) -> PageObject? {
+        let assetID = UUID()
+        do {
+            try store.saveAssetData(imageData, for: assetID)
+            assetCacheByID[assetID] = imageData
+        } catch {
+            activeErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            return nil
+        }
+
+        let object = PageObject.defaultImageObject(assetID: assetID, intrinsicSize: intrinsicSize)
+        return addPageObject(object, on: pageID, in: sectionID, notebookID: notebookID)
+    }
+
+    /// Inserts a default-sized Basic Shape (`rectangle`, `circle`, `arrow`, `line`) onto the target page and selects it immediately.
+    @discardableResult
+    public func insertBasicShape(
+        _ kind: BasicShapeKind,
+        color: InkColorPreset? = nil,
+        strokeWidth: CGFloat? = nil,
+        on pageID: UUID? = nil,
+        in sectionID: UUID? = nil,
+        notebookID: UUID? = nil
+    ) -> PageObject? {
+        let resolvedColor = color ?? toolState.penColor
+        let resolvedWidth = strokeWidth ?? Swift.max(2.5, toolState.penWidth)
+        let object = PageObject.defaultBasicShape(kind, color: resolvedColor, strokeWidth: resolvedWidth)
+        return addPageObject(object, on: pageID, in: sectionID, notebookID: notebookID)
+    }
+
+    /// Adds a `PageObject` to the specified page (defaulting to the currently selected page) and selects it.
+    @discardableResult
+    public func addPageObject(
+        _ object: PageObject,
+        on pageID: UUID? = nil,
+        in sectionID: UUID? = nil,
+        notebookID: UUID? = nil
+    ) -> PageObject? {
+        guard let targetPageID = pageID ?? selectedPageID,
+              let indices = pageIndices(pageID: targetPageID, sectionID: sectionID, notebookID: notebookID) else {
+            return nil
+        }
+        let now = Date()
+        notebooks[indices.notebook].sections[indices.section].pages[indices.page].addObject(object, now: now)
+        let inserted = notebooks[indices.notebook].sections[indices.section].pages[indices.page].objects.last ?? object
+        notebooks[indices.notebook].sections[indices.section].updatedAt = now
+        notebooks[indices.notebook].updatedAt = now
+        selectedObjectID = inserted.id
+        isObjectSelectModeActive = true
+        drawingRevisionByPageID[targetPageID, default: 0] += 1
+        saveNow()
+        return inserted
+    }
+
+    /// Updates an existing `PageObject` (move, resize, rotate, recolour, stroke width) on the specified page.
+    public func updatePageObject(
+        _ updatedObject: PageObject,
+        on pageID: UUID? = nil,
+        in sectionID: UUID? = nil,
+        notebookID: UUID? = nil
+    ) {
+        guard let targetPageID = pageID ?? selectedPageID,
+              let indices = pageIndices(pageID: targetPageID, sectionID: sectionID, notebookID: notebookID) else {
+            return
+        }
+        let now = Date()
+        notebooks[indices.notebook].sections[indices.section].pages[indices.page].updateObject(updatedObject, now: now)
+        notebooks[indices.notebook].sections[indices.section].updatedAt = now
+        notebooks[indices.notebook].updatedAt = now
+        drawingRevisionByPageID[targetPageID, default: 0] += 1
+        saveNow()
+    }
+
+    /// Replaces the entire `[PageObject]` array on a page (used by Undo/Redo).
+    public func setPageObjects(
+        _ objects: [PageObject],
+        on pageID: UUID? = nil,
+        in sectionID: UUID? = nil,
+        notebookID: UUID? = nil
+    ) {
+        guard let targetPageID = pageID ?? selectedPageID,
+              let indices = pageIndices(pageID: targetPageID, sectionID: sectionID, notebookID: notebookID) else {
+            return
+        }
+        let now = Date()
+        notebooks[indices.notebook].sections[indices.section].pages[indices.page].setObjects(objects, now: now)
+        notebooks[indices.notebook].sections[indices.section].updatedAt = now
+        notebooks[indices.notebook].updatedAt = now
+        if let selectedObjectID, !objects.contains(where: { $0.id == selectedObjectID }) {
+            self.selectedObjectID = nil
+        }
+        drawingRevisionByPageID[targetPageID, default: 0] += 1
+        saveNow()
+    }
+
+    /// Duplicates an existing `PageObject` on the page with a slight `(18, 18)` offset and selects the duplicate.
+    @discardableResult
+    public func duplicatePageObject(
+        id objectID: UUID,
+        on pageID: UUID? = nil,
+        in sectionID: UUID? = nil,
+        notebookID: UUID? = nil
+    ) -> PageObject? {
+        guard let targetPageID = pageID ?? selectedPageID,
+              let indices = pageIndices(pageID: targetPageID, sectionID: sectionID, notebookID: notebookID),
+              let original = notebooks[indices.notebook].sections[indices.section].pages[indices.page].objects.first(where: { $0.id == objectID }) else {
+            return nil
+        }
+        let duplicate = PageObject(
+            id: UUID(),
+            frame: original.frame.offsetBy(dx: 18, dy: 18),
+            rotation: original.rotation,
+            zIndex: original.zIndex + 1,
+            kind: original.kind
+        )
+        return addPageObject(duplicate, on: targetPageID, in: sectionID, notebookID: notebookID)
+    }
+
+    /// Deletes a `PageObject` by ID from the specified page.
+    public func deletePageObject(
+        id objectID: UUID,
+        on pageID: UUID? = nil,
+        in sectionID: UUID? = nil,
+        notebookID: UUID? = nil
+    ) {
+        guard let targetPageID = pageID ?? selectedPageID,
+              let indices = pageIndices(pageID: targetPageID, sectionID: sectionID, notebookID: notebookID),
+              notebooks[indices.notebook].sections[indices.section].pages[indices.page].deleteObject(id: objectID) != nil else {
+            return
+        }
+        let now = Date()
+        notebooks[indices.notebook].sections[indices.section].updatedAt = now
+        notebooks[indices.notebook].updatedAt = now
+        if selectedObjectID == objectID {
+            selectedObjectID = nil
+        }
+        drawingRevisionByPageID[targetPageID, default: 0] += 1
         saveNow()
     }
 

@@ -3,12 +3,14 @@
 //  Notes
 //
 //  Responsibility: Hosts `PencilCanvasScrollView` for the selected A4 portrait page and provides toolbar controls for:
-//    - Top-left: Full-Screen sidebar toggle + Undo and Redo stroke buttons
-//    - Top-right: Compact 4-Tool Menu Button (Pen, Highlighter, Rubber, Ruler), Scribble-to-Erase toggle, Page Paper style picker, and Add Page Below.
-//  Dependencies: SwiftUI, Domain, DesignSystem, LibraryViewModel, PencilCanvasScrollView, DrawingToolMenuButton.
+//    - Top-left: Full-Screen sidebar toggle + Undo and Redo buttons
+//    - Top-right: Compact 4-Tool Menu Button (Pen, Highlighter, Rubber, Ruler), Object Select toggle, Insert Menu (Photo & Basic Shapes: Rectangle, Circle, Arrow, Line), Scribble-to-Erase toggle, Page Paper style picker, and Add Page Below.
+//  Dependencies: SwiftUI, PhotosUI, UIKit, Domain, DesignSystem, LibraryViewModel, PencilCanvasScrollView, DrawingToolMenuButton.
 //
 
+import PhotosUI
 import SwiftUI
+import UIKit
 
 public struct PageEditorView: View {
     @Bindable var viewModel: LibraryViewModel
@@ -22,6 +24,8 @@ public struct PageEditorView: View {
     @State private var canRedo: Bool = false
     @State private var undoTriggerCount: Int = 0
     @State private var redoTriggerCount: Int = 0
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var isPhotoPickerPresented: Bool = false
 
     public init(
         viewModel: LibraryViewModel,
@@ -50,24 +54,82 @@ public struct PageEditorView: View {
         return page.title
     }
 
+    private var isObjectModeActiveBinding: Binding<Bool> {
+        Binding<Bool>(
+            get: { viewModel.isObjectSelectModeActive || viewModel.selectedObjectID != nil },
+            set: { newValue in
+                viewModel.isObjectSelectModeActive = newValue
+                if !newValue {
+                    viewModel.selectedObjectID = nil
+                } else if viewModel.selectedObjectID == nil, let lastObject = page.objects.last {
+                    viewModel.selectedObjectID = lastObject.id
+                }
+            }
+        )
+    }
+
     public var body: some View {
         PencilCanvasScrollView(
             pageID: page.id,
             paperType: effectivePaper,
             initialDrawingData: viewModel.loadDrawingData(for: page.id),
+            pageObjects: page.objects,
+            selectedObjectID: viewModel.selectedObjectID,
+            isObjectSelectModeActive: viewModel.isObjectSelectModeActive,
             toolState: viewModel.toolState,
             isScribbleToEraseEnabled: viewModel.isScribbleToEraseEnabled,
             undoTriggerCount: undoTriggerCount,
             redoTriggerCount: redoTriggerCount,
             canGoToPreviousPage: viewModel.canGoToPreviousPage,
+            assetDataProvider: { assetID in
+                viewModel.loadAssetData(for: assetID)
+            },
             onDrawingChanged: { updatedData in
                 viewModel.scheduleDrawingAutosave(updatedData, for: page.id)
+            },
+            onSelectObject: { objectID in
+                viewModel.selectedObjectID = objectID
+                viewModel.isObjectSelectModeActive = (objectID != nil)
+            },
+            onUpdateObjectLive: { updatedObject in
+                viewModel.updatePageObject(
+                    updatedObject,
+                    on: page.id,
+                    in: section.id,
+                    notebookID: notebook.id
+                )
+            },
+            onReplaceAllObjects: { replacedObjects in
+                viewModel.setPageObjects(
+                    replacedObjects,
+                    on: page.id,
+                    in: section.id,
+                    notebookID: notebook.id
+                )
+            },
+            onDuplicateObject: { objectID in
+                viewModel.duplicatePageObject(
+                    id: objectID,
+                    on: page.id,
+                    in: section.id,
+                    notebookID: notebook.id
+                )
+            },
+            onDeleteObject: { objectID in
+                viewModel.deletePageObject(
+                    id: objectID,
+                    on: page.id,
+                    in: section.id,
+                    notebookID: notebook.id
+                )
             },
             onUndoStateChanged: { updatedCanUndo, updatedCanRedo in
                 canUndo = updatedCanUndo
                 canRedo = updatedCanRedo
             },
             onPencilDoubleTap: {
+                viewModel.selectedObjectID = nil
+                viewModel.isObjectSelectModeActive = false
                 viewModel.toolState.handlePencilDoubleTapToggleEraser()
             },
             onSwipeToNextPage: {
@@ -80,6 +142,33 @@ public struct PageEditorView: View {
         .ignoresSafeArea(edges: .bottom)
         .navigationTitle(pagePositionLabel)
         .navigationBarTitleDisplayMode(.inline)
+        .photosPicker(
+            isPresented: $isPhotoPickerPresented,
+            selection: $selectedPhotoItem,
+            matching: .images
+        )
+        .onChange(of: selectedPhotoItem) { _, newItem in
+            guard let newItem else { return }
+            Task { @MainActor in
+                defer { selectedPhotoItem = nil }
+                if let rawData = try? await newItem.loadTransferable(type: Data.self),
+                   let uiImage = UIImage(data: rawData) {
+                    let normalizedData = uiImage.pngData() ?? rawData
+                    viewModel.insertImageObject(
+                        imageData: normalizedData,
+                        intrinsicSize: uiImage.size,
+                        on: page.id,
+                        in: section.id,
+                        notebookID: notebook.id
+                    )
+                }
+            }
+        }
+        .onChange(of: viewModel.toolState) { _, _ in
+            // Picking or adjusting an ink tool returns focus to drawing
+            viewModel.selectedObjectID = nil
+            viewModel.isObjectSelectModeActive = false
+        }
         .toolbar {
             ToolbarItemGroup(placement: .topBarLeading) {
                 Button(action: onToggleFullScreen) {
@@ -96,7 +185,7 @@ public struct PageEditorView: View {
                     Label("Undo", systemImage: "arrow.uturn.backward")
                 }
                 .disabled(!canUndo)
-                .help("Undo last stroke or change")
+                .help("Undo last stroke or object change")
 
                 Button {
                     redoTriggerCount += 1
@@ -104,12 +193,48 @@ public struct PageEditorView: View {
                     Label("Redo", systemImage: "arrow.uturn.forward")
                 }
                 .disabled(!canRedo)
-                .help("Redo stroke or change")
+                .help("Redo stroke or object change")
             }
 
             ToolbarItemGroup(placement: .topBarTrailing) {
                 // Compact 4-Tool Popover Button (Pen >, Highlighter >, Rubber >, Ruler)
                 DrawingToolMenuButton(toolState: $viewModel.toolState)
+
+                // Select / Manipulate Objects Toggle
+                Toggle(isOn: isObjectModeActiveBinding) {
+                    Label("Select Object", systemImage: "cursorarrow")
+                }
+                .toggleStyle(.button)
+                .help("Select, move, resize, or rotate objects on this page")
+
+                // Insert Menu (Photos & Basic Shapes: Rectangle, Circle, Arrow, Line)
+                Menu {
+                    Button {
+                        isPhotoPickerPresented = true
+                    } label: {
+                        Label("Insert Photo…", systemImage: "photo.on.rectangle.angled")
+                    }
+
+                    Divider()
+
+                    Section("Basic Shapes") {
+                        ForEach(BasicShapeKind.allCases) { shapeKind in
+                            Button {
+                                viewModel.insertBasicShape(
+                                    shapeKind,
+                                    on: page.id,
+                                    in: section.id,
+                                    notebookID: notebook.id
+                                )
+                            } label: {
+                                Label(shapeKind.displayName, systemImage: shapeKind.systemImageName)
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Insert", systemImage: "plus.square.on.square")
+                }
+                .help("Insert an image or basic shape (Rectangle, Circle, Arrow, Line)")
 
                 Toggle(isOn: $viewModel.isScribbleToEraseEnabled) {
                     Label(

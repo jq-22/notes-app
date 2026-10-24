@@ -12,6 +12,8 @@ import SwiftUI
 public struct PageThumbnailView: View {
     public let paperType: PaperType
     public let drawingData: Data?
+    public let pageObjects: [PageObject]
+    public let assetDataProvider: (UUID) -> Data?
     public let pageNumber: Int
     public let isSelected: Bool
 
@@ -21,11 +23,15 @@ public struct PageThumbnailView: View {
     public init(
         paperType: PaperType,
         drawingData: Data? = nil,
+        pageObjects: [PageObject] = [],
+        assetDataProvider: @escaping (UUID) -> Data? = { _ in nil },
         pageNumber: Int,
         isSelected: Bool
     ) {
         self.paperType = paperType
         self.drawingData = drawingData
+        self.pageObjects = pageObjects
+        self.assetDataProvider = assetDataProvider
         self.pageNumber = pageNumber
         self.isSelected = isSelected
     }
@@ -55,6 +61,22 @@ public struct PageThumbnailView: View {
                 lineSpacing: Theme.Thumbnail.lineSpacing,
                 showMarginLine: false
             )
+
+            if !pageObjects.isEmpty {
+                PageObjectsOverlayView(
+                    objects: pageObjects,
+                    selectedObjectID: nil,
+                    isInteractive: false,
+                    assetDataProvider: assetDataProvider
+                )
+                .scaleEffect(
+                    x: Theme.Thumbnail.width / PageGeometry.a4Width,
+                    y: Theme.Thumbnail.height / PageGeometry.a4Height,
+                    anchor: .topLeading
+                )
+                .frame(width: Theme.Thumbnail.width, height: Theme.Thumbnail.height, alignment: .topLeading)
+                .allowsHitTesting(false)
+            }
 
             if let inkImage = renderedInkImage {
                 Image(uiImage: inkImage)

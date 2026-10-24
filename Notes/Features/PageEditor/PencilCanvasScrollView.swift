@@ -24,12 +24,21 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
     public let pageID: UUID
     public let paperType: PaperType
     public let initialDrawingData: Data?
+    public let pageObjects: [PageObject]
+    public let selectedObjectID: UUID?
+    public let isObjectSelectModeActive: Bool
     public let toolState: DrawingToolState
     public let isScribbleToEraseEnabled: Bool
     public let undoTriggerCount: Int
     public let redoTriggerCount: Int
     public let canGoToPreviousPage: Bool
+    public let assetDataProvider: (UUID) -> Data?
     public let onDrawingChanged: (Data) -> Void
+    public let onSelectObject: (UUID?) -> Void
+    public let onUpdateObjectLive: (PageObject) -> Void
+    public let onReplaceAllObjects: ([PageObject]) -> Void
+    public let onDuplicateObject: (UUID) -> Void
+    public let onDeleteObject: (UUID) -> Void
     public let onUndoStateChanged: (Bool, Bool) -> Void
     public let onPencilDoubleTap: () -> Void
     public var onSwipeToNextPage: (() -> Void)?
@@ -50,12 +59,21 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         pageID: UUID,
         paperType: PaperType,
         initialDrawingData: Data?,
+        pageObjects: [PageObject] = [],
+        selectedObjectID: UUID? = nil,
+        isObjectSelectModeActive: Bool = false,
         toolState: DrawingToolState,
         isScribbleToEraseEnabled: Bool,
         undoTriggerCount: Int = 0,
         redoTriggerCount: Int = 0,
         canGoToPreviousPage: Bool = false,
+        assetDataProvider: @escaping (UUID) -> Data? = { _ in nil },
         onDrawingChanged: @escaping (Data) -> Void,
+        onSelectObject: @escaping (UUID?) -> Void = { _ in },
+        onUpdateObjectLive: @escaping (PageObject) -> Void = { _ in },
+        onReplaceAllObjects: @escaping ([PageObject]) -> Void = { _ in },
+        onDuplicateObject: @escaping (UUID) -> Void = { _ in },
+        onDeleteObject: @escaping (UUID) -> Void = { _ in },
         onUndoStateChanged: @escaping (Bool, Bool) -> Void = { _, _ in },
         onPencilDoubleTap: @escaping () -> Void = {},
         onSwipeToNextPage: (() -> Void)? = nil,
@@ -64,12 +82,21 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         self.pageID = pageID
         self.paperType = paperType
         self.initialDrawingData = initialDrawingData
+        self.pageObjects = pageObjects
+        self.selectedObjectID = selectedObjectID
+        self.isObjectSelectModeActive = isObjectSelectModeActive
         self.toolState = toolState
         self.isScribbleToEraseEnabled = isScribbleToEraseEnabled
         self.undoTriggerCount = undoTriggerCount
         self.redoTriggerCount = redoTriggerCount
         self.canGoToPreviousPage = canGoToPreviousPage
+        self.assetDataProvider = assetDataProvider
         self.onDrawingChanged = onDrawingChanged
+        self.onSelectObject = onSelectObject
+        self.onUpdateObjectLive = onUpdateObjectLive
+        self.onReplaceAllObjects = onReplaceAllObjects
+        self.onDuplicateObject = onDuplicateObject
+        self.onDeleteObject = onDeleteObject
         self.onUndoStateChanged = onUndoStateChanged
         self.onPencilDoubleTap = onPencilDoubleTap
         self.onSwipeToNextPage = onSwipeToNextPage
@@ -78,6 +105,10 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
 
     public func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
+    }
+
+    private var isInteractiveObjectMode: Bool {
+        selectedObjectID != nil || isObjectSelectModeActive
     }
 
     public func makeUIView(context: Context) -> UIScrollView {
@@ -113,7 +144,18 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         paperHost.view.isUserInteractionEnabled = false
         pageContainer.addSubview(paperHost.view)
 
-        // 2. Transparent PKCanvasView layer on top of paper (exact working setup)
+        // 2. PageObjects overlay layer (Basic Shapes, Images, Library/Stroke objects + unified handles)
+        let objectsHost = UIHostingController(rootView: context.coordinator.makeObjectsOverlayView())
+        objectsHost.view.frame = pageContainer.bounds
+        objectsHost.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        objectsHost.view.backgroundColor = .clear
+        objectsHost.view.isOpaque = false
+        objectsHost.view.layer.cornerRadius = Theme.CornerRadius.page
+        objectsHost.view.clipsToBounds = false
+        objectsHost.view.isUserInteractionEnabled = isInteractiveObjectMode
+        pageContainer.addSubview(objectsHost.view)
+
+        // 3. Transparent PKCanvasView layer on top of paper (exact working setup)
         let canvasView = PKCanvasView(frame: pageContainer.bounds)
         canvasView.overrideUserInterfaceStyle = .light
         canvasView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -124,7 +166,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         canvasView.delegate = context.coordinator
         pageContainer.addSubview(canvasView)
 
-        // 3. Apple Pencil double-tap interaction -> switch to Rubber (Eraser) and back
+        // 4. Apple Pencil double-tap interaction -> switch to Rubber (Eraser) and back
         let pencilInteraction = UIPencilInteraction()
         pencilInteraction.delegate = context.coordinator
         canvasView.addInteraction(pencilInteraction)
@@ -142,12 +184,25 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         doubleTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         scrollView.addGestureRecognizer(doubleTap)
 
+        // Single-tap with finger on scrollView to select a placed PageObject even when in Pen/Highlighter mode
+        let singleFingerTap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleSingleFingerTap(_:))
+        )
+        singleFingerTap.numberOfTapsRequired = 1
+        singleFingerTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        singleFingerTap.cancelsTouchesInView = false
+        singleFingerTap.require(toFail: doubleTap)
+        scrollView.addGestureRecognizer(singleFingerTap)
+
         context.coordinator.scrollView = scrollView
         context.coordinator.pageContainerView = pageContainer
         context.coordinator.paperHostingController = paperHost
+        context.coordinator.objectsHostingController = objectsHost
         context.coordinator.canvasView = canvasView
 
-        context.coordinator.loadPageIfNeeded(pageID: pageID, data: initialDrawingData)
+        context.coordinator.loadPageIfNeeded(pageID: pageID, data: initialDrawingData, objects: pageObjects)
+        context.coordinator.syncObjectsLayerInteraction(isInteractive: isInteractiveObjectMode)
         context.coordinator.applyToolState(toolState, to: canvasView)
 
         return scrollView
@@ -156,7 +211,10 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
     public func updateUIView(_ scrollView: UIScrollView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.paperHostingController?.rootView = PaperBackgroundView(paperType: paperType)
-        context.coordinator.loadPageIfNeeded(pageID: pageID, data: initialDrawingData)
+        context.coordinator.loadPageIfNeeded(pageID: pageID, data: initialDrawingData, objects: pageObjects)
+        context.coordinator.recordExternalObjectAdditionOrDeletionIfNeeded(currentObjects: pageObjects)
+        context.coordinator.objectsHostingController?.rootView = context.coordinator.makeObjectsOverlayView()
+        context.coordinator.syncObjectsLayerInteraction(isInteractive: isInteractiveObjectMode)
         if let canvasView = context.coordinator.canvasView {
             context.coordinator.applyToolState(toolState, to: canvasView)
             context.coordinator.handleUndoRedoTriggersIfNeeded(
@@ -175,11 +233,14 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         weak var scrollView: CenteringScrollView?
         weak var pageContainerView: UIView?
         var paperHostingController: UIHostingController<PaperBackgroundView>?
+        var objectsHostingController: UIHostingController<PageObjectsOverlayView>?
         weak var canvasView: PKCanvasView?
 
         private var currentLoadedPageID: UUID?
         private var isProgrammaticDrawingUpdate = false
+        private var isProgrammaticObjectsUpdate = false
         private var previousDrawingSnapshot = PKDrawing()
+        private var previousObjectsSnapshot: [PageObject] = []
         private var lastAppliedToolState: DrawingToolState?
         private var lastHandledUndoTriggerCount: Int = 0
         private var lastHandledRedoTriggerCount: Int = 0
@@ -193,6 +254,118 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             self.parent = parent
             self.lastHandledUndoTriggerCount = parent.undoTriggerCount
             self.lastHandledRedoTriggerCount = parent.redoTriggerCount
+            self.previousObjectsSnapshot = parent.pageObjects
+        }
+
+        func makeObjectsOverlayView() -> PageObjectsOverlayView {
+            let interactive = parent.selectedObjectID != nil || parent.isObjectSelectModeActive
+            return PageObjectsOverlayView(
+                objects: parent.pageObjects,
+                selectedObjectID: parent.selectedObjectID,
+                isInteractive: interactive,
+                assetDataProvider: parent.assetDataProvider,
+                onSelectObject: { [weak self] selectedID in
+                    self?.parent.onSelectObject(selectedID)
+                },
+                onUpdateObjectLive: { [weak self] updatedObject in
+                    guard let self else { return }
+                    self.isProgrammaticObjectsUpdate = true
+                    self.parent.onUpdateObjectLive(updatedObject)
+                    self.isProgrammaticObjectsUpdate = false
+                },
+                onCommitObjectsChange: { [weak self] before, after in
+                    self?.registerUndoForObjectChange(from: before, to: after, actionName: "Modify Object")
+                },
+                onDuplicateObject: { [weak self] objectID in
+                    self?.parent.onDuplicateObject(objectID)
+                },
+                onDeleteObject: { [weak self] objectID in
+                    guard let self else { return }
+                    self.isProgrammaticObjectsUpdate = true
+                    self.parent.onDeleteObject(objectID)
+                    self.isProgrammaticObjectsUpdate = false
+                }
+            )
+        }
+
+        func syncObjectsLayerInteraction(isInteractive: Bool) {
+            guard let pageContainerView,
+                  let objectsView = objectsHostingController?.view,
+                  let canvasView else { return }
+
+            objectsView.isUserInteractionEnabled = isInteractive
+            canvasView.isUserInteractionEnabled = !isInteractive
+
+            if isInteractive {
+                // Bring objectsView to front while manipulating handles so corner dots and floating bar sit above ink
+                pageContainerView.bringSubviewToFront(objectsView)
+            } else {
+                // Keep PKCanvasView in front when drawing so Apple Pencil ink renders over objects seamlessly
+                pageContainerView.bringSubviewToFront(canvasView)
+            }
+        }
+
+        func recordExternalObjectAdditionOrDeletionIfNeeded(currentObjects: [PageObject]) {
+            guard !isProgrammaticObjectsUpdate else {
+                previousObjectsSnapshot = currentObjects
+                return
+            }
+            if currentObjects.count != previousObjectsSnapshot.count {
+                let before = previousObjectsSnapshot
+                let after = currentObjects
+                previousObjectsSnapshot = currentObjects
+                registerUndoForObjectChange(from: before, to: after, actionName: "Object Change")
+            } else {
+                previousObjectsSnapshot = currentObjects
+            }
+        }
+
+        private func registerUndoForObjectChange(
+            from oldObjects: [PageObject],
+            to newObjects: [PageObject],
+            actionName: String
+        ) {
+            previousObjectsSnapshot = newObjects
+            guard let canvasView, oldObjects != newObjects else { return }
+            canvasView.undoManager?.registerUndo(withTarget: self) { coordinator in
+                MainActor.assumeIsolated {
+                    guard let canvas = coordinator.canvasView else { return }
+                    coordinator.applyUndoableObjectsReplacement(
+                        from: newObjects,
+                        to: oldObjects,
+                        on: canvas,
+                        actionName: actionName
+                    )
+                }
+            }
+            canvasView.undoManager?.setActionName(actionName)
+            notifyUndoState(for: canvasView)
+        }
+
+        private func applyUndoableObjectsReplacement(
+            from oldObjects: [PageObject],
+            to newObjects: [PageObject],
+            on canvasView: PKCanvasView,
+            actionName: String
+        ) {
+            isProgrammaticObjectsUpdate = true
+            previousObjectsSnapshot = newObjects
+            parent.onReplaceAllObjects(newObjects)
+            isProgrammaticObjectsUpdate = false
+
+            canvasView.undoManager?.registerUndo(withTarget: self) { coordinator in
+                MainActor.assumeIsolated {
+                    guard let canvas = coordinator.canvasView else { return }
+                    coordinator.applyUndoableObjectsReplacement(
+                        from: newObjects,
+                        to: oldObjects,
+                        on: canvas,
+                        actionName: actionName
+                    )
+                }
+            }
+            canvasView.undoManager?.setActionName(actionName)
+            notifyUndoState(for: canvasView)
         }
 
         // MARK: - Viewport Sizing & Snap-to-Width
@@ -235,6 +408,10 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             if let paperView = paperHostingController?.view {
                 paperView.contentScaleFactor = screenScale * clampedZoom
                 paperView.setNeedsDisplay()
+            }
+            if let objectsView = objectsHostingController?.view {
+                objectsView.contentScaleFactor = screenScale * clampedZoom
+                objectsView.setNeedsDisplay()
             }
         }
 
@@ -310,8 +487,10 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 lastHandledUndoTriggerCount = undoTriggerCount
                 if canvasView.undoManager?.canUndo == true {
                     canvasView.undoManager?.undo()
-                    previousDrawingSnapshot = canvasView.drawing
-                    parent.onDrawingChanged(canvasView.drawing.dataRepresentation())
+                    if canvasView.drawing != previousDrawingSnapshot {
+                        previousDrawingSnapshot = canvasView.drawing
+                        parent.onDrawingChanged(canvasView.drawing.dataRepresentation())
+                    }
                     notifyUndoState(for: canvasView)
                 }
             }
@@ -319,8 +498,10 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 lastHandledRedoTriggerCount = redoTriggerCount
                 if canvasView.undoManager?.canRedo == true {
                     canvasView.undoManager?.redo()
-                    previousDrawingSnapshot = canvasView.drawing
-                    parent.onDrawingChanged(canvasView.drawing.dataRepresentation())
+                    if canvasView.drawing != previousDrawingSnapshot {
+                        previousDrawingSnapshot = canvasView.drawing
+                        parent.onDrawingChanged(canvasView.drawing.dataRepresentation())
+                    }
                     notifyUndoState(for: canvasView)
                 }
             }
@@ -352,12 +533,16 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
 
         // MARK: - Page Loading & Slide Transition
 
-        func loadPageIfNeeded(pageID: UUID, data: Data?) {
+        func loadPageIfNeeded(pageID: UUID, data: Data?, objects: [PageObject]) {
             guard currentLoadedPageID != pageID, let canvasView else { return }
             let isSwitchingFromAnotherPage = (currentLoadedPageID != nil)
             currentLoadedPageID = pageID
             isProgrammaticDrawingUpdate = true
-            defer { isProgrammaticDrawingUpdate = false }
+            isProgrammaticObjectsUpdate = true
+            defer {
+                isProgrammaticDrawingUpdate = false
+                isProgrammaticObjectsUpdate = false
+            }
 
             // Play smooth page-slide animation when switching pages
             if isSwitchingFromAnotherPage, let pageContainerView {
@@ -369,6 +554,8 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 pageContainerView.layer.add(transition, forKey: "pageTurnSlide")
                 pendingTransitionSubtype = nil
             }
+
+            previousObjectsSnapshot = objects
 
             if let data, let decoded = try? PKDrawing(data: data) {
                 canvasView.drawing = decoded
@@ -449,6 +636,27 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 scrollView.setZoomScale(fitPage, animated: true)
                 scrollView.centerPageContainer()
                 updatePaperRenderScale(for: fitPage, in: scrollView)
+            }
+        }
+
+        @objc func handleSingleFingerTap(_ recognizer: UITapGestureRecognizer) {
+            guard recognizer.state == .ended,
+                  parent.selectedObjectID == nil,
+                  !parent.isObjectSelectModeActive,
+                  let pageContainerView,
+                  !parent.pageObjects.isEmpty else {
+                return
+            }
+            let locationInPage = recognizer.location(in: pageContainerView)
+            // Check from topmost object (highest zIndex) down
+            let sortedTopDown = parent.pageObjects.sorted { lhs, rhs in
+                if lhs.zIndex == rhs.zIndex {
+                    return lhs.createdAt > rhs.createdAt
+                }
+                return lhs.zIndex > rhs.zIndex
+            }
+            if let hitObject = sortedTopDown.first(where: { $0.contains(pagePoint: locationInPage, tolerance: 8.0) }) {
+                parent.onSelectObject(hitObject.id)
             }
         }
 

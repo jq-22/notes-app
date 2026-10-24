@@ -78,4 +78,21 @@ struct FilePageStoreTests {
             _ = try store.loadNotebooks()
         }
     }
+
+    @Test("Image asset data is saved, loaded, and deleted independently")
+    func separateImageAssetDataLifecycle() throws {
+        let dir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = FilePageStore(baseDirectoryURL: dir)
+        let assetID = UUID()
+        let sampleImageBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+
+        #expect(try store.loadAssetData(for: assetID) == nil)
+        try store.saveAssetData(sampleImageBytes, for: assetID)
+        #expect(try store.loadAssetData(for: assetID) == sampleImageBytes)
+
+        try store.deleteAssetData(for: [assetID])
+        #expect(try store.loadAssetData(for: assetID) == nil)
+    }
 }

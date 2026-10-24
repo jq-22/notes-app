@@ -12,6 +12,7 @@ import Testing
 final class InMemoryPageStore: PageStore, @unchecked Sendable {
     var storedNotebooks: [Notebook] = []
     var storedDrawings: [UUID: Data] = [:]
+    var storedAssets: [UUID: Data] = [:]
     var shouldFailSaves = false
     var shouldFailLoads = false
 
@@ -43,6 +44,23 @@ final class InMemoryPageStore: PageStore, @unchecked Sendable {
     func deleteDrawingData(for pageIDs: [UUID]) throws {
         for id in pageIDs {
             storedDrawings.removeValue(forKey: id)
+        }
+    }
+
+    func loadAssetData(for assetID: UUID) throws -> Data? {
+        storedAssets[assetID]
+    }
+
+    func saveAssetData(_ data: Data, for assetID: UUID) throws {
+        if shouldFailSaves {
+            throw PageStoreError.failedToSaveAsset(assetID: assetID, reason: "Simulated disk full")
+        }
+        storedAssets[assetID] = data
+    }
+
+    func deleteAssetData(for assetIDs: [UUID]) throws {
+        for id in assetIDs {
+            storedAssets.removeValue(forKey: id)
         }
     }
 }
@@ -207,5 +225,44 @@ struct LibraryViewModelTests {
         // Batch delete the two moved pages from Section 2
         vm.deletePages(ids: [p1ID, p3.id], in: sec2.id, notebookID: notebook.id)
         #expect(vm.notebooks[0].sections[1].pages.count == 1)
+    }
+
+    @Test("Inserting, updating, duplicating, and deleting Basic Shapes and Images persists and selects objects")
+    func pageObjectLifecycleInViewModel() throws {
+        let store = InMemoryPageStore()
+        let vm = LibraryViewModel(store: store)
+        let nb = vm.createNotebook(title: "Diagrams")
+        let secID = try #require(nb.sections.first?.id)
+        let pageID = try #require(nb.sections.first?.pages.first?.id)
+
+        // 1. Insert Basic Shape (Rectangle)
+        let rectObj = try #require(vm.insertBasicShape(.rectangle, color: .blue, strokeWidth: 4.0, on: pageID, in: secID, notebookID: nb.id))
+        #expect(vm.selectedObjectID == rectObj.id)
+        #expect(vm.isObjectSelectModeActive == true)
+        #expect(vm.selectedPage?.objects.count == 1)
+
+        // 2. Move & Resize update
+        let moved = rectObj.moved(by: CGSize(width: 25, height: 40))
+        vm.updatePageObject(moved, on: pageID, in: secID, notebookID: nb.id)
+        #expect(vm.selectedPage?.objects.first?.frame == moved.frame)
+
+        // 3. Duplicate
+        let dup = try #require(vm.duplicatePageObject(id: rectObj.id, on: pageID, in: secID, notebookID: nb.id))
+        #expect(vm.selectedPage?.objects.count == 2)
+        #expect(vm.selectedObjectID == dup.id)
+
+        // 4. Insert Image Object
+        let imgBytes = Data([0x01, 0x02, 0x03, 0x04])
+        let imgObj = try #require(vm.insertImageObject(imageData: imgBytes, intrinsicSize: CGSize(width: 400, height: 200), on: pageID, in: secID, notebookID: nb.id))
+        #expect(vm.selectedPage?.objects.count == 3)
+        if case .image(let assetID) = imgObj.kind {
+            #expect(vm.loadAssetData(for: assetID) == imgBytes)
+        } else {
+            Issue.record("Expected image object kind")
+        }
+
+        // 5. Delete object
+        vm.deletePageObject(id: dup.id, on: pageID, in: secID, notebookID: nb.id)
+        #expect(vm.selectedPage?.objects.count == 2)
     }
 }

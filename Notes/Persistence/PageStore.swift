@@ -17,6 +17,9 @@ public enum PageStoreError: LocalizedError, Equatable, Sendable {
     case failedToLoadDrawing(pageID: UUID, reason: String)
     case failedToSaveDrawing(pageID: UUID, reason: String)
     case failedToDeleteDrawing(pageID: UUID, reason: String)
+    case failedToLoadAsset(assetID: UUID, reason: String)
+    case failedToSaveAsset(assetID: UUID, reason: String)
+    case failedToDeleteAsset(assetID: UUID, reason: String)
 
     public var errorDescription: String? {
         switch self {
@@ -30,6 +33,12 @@ public enum PageStoreError: LocalizedError, Equatable, Sendable {
             return "Could not save page drawing: \(reason)"
         case .failedToDeleteDrawing(_, let reason):
             return "Could not clean up deleted page data: \(reason)"
+        case .failedToLoadAsset(_, let reason):
+            return "Could not load image asset: \(reason)"
+        case .failedToSaveAsset(_, let reason):
+            return "Could not save image asset: \(reason)"
+        case .failedToDeleteAsset(_, let reason):
+            return "Could not delete image asset: \(reason)"
         }
     }
 }
@@ -50,4 +59,19 @@ public protocol PageStore: Sendable {
 
     /// Removes stored drawing data for the given page UUIDs (if present).
     func deleteDrawingData(for pageIDs: [UUID]) throws
+
+    /// Loads binary asset data (e.g. PNG/JPEG image) for a given asset UUID, or returns `nil` if not found.
+    func loadAssetData(for assetID: UUID) throws -> Data?
+
+    /// Atomically saves binary asset data for a given asset UUID.
+    func saveAssetData(_ data: Data, for assetID: UUID) throws
+
+    /// Removes stored binary asset data for the given asset UUIDs (if present).
+    func deleteAssetData(for assetIDs: [UUID]) throws
+}
+
+public extension PageStore {
+    func loadAssetData(for assetID: UUID) throws -> Data? { nil }
+    func saveAssetData(_ data: Data, for assetID: UUID) throws {}
+    func deleteAssetData(for assetIDs: [UUID]) throws {}
 }

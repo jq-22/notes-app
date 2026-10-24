@@ -46,13 +46,22 @@ public final class FilePageStore: PageStore, @unchecked Sendable {
         baseDirectoryURL.appendingPathComponent("Drawings", isDirectory: true)
     }
 
+    private var assetsDirectoryURL: URL {
+        baseDirectoryURL.appendingPathComponent("Assets", isDirectory: true)
+    }
+
     private func drawingFileURL(for pageID: UUID) -> URL {
         drawingsDirectoryURL.appendingPathComponent("\(pageID.uuidString).pkdrawing", isDirectory: false)
+    }
+
+    private func assetFileURL(for assetID: UUID) -> URL {
+        assetsDirectoryURL.appendingPathComponent("\(assetID.uuidString).dat", isDirectory: false)
     }
 
     private func ensureDirectoriesExist() throws {
         try fileManager.createDirectory(at: baseDirectoryURL, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: drawingsDirectoryURL, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: assetsDirectoryURL, withIntermediateDirectories: true)
     }
 
     public func loadNotebooks() throws -> [Notebook] {
@@ -125,6 +134,50 @@ public final class FilePageStore: PageStore, @unchecked Sendable {
                 try fileManager.removeItem(at: url)
             } catch {
                 throw PageStoreError.failedToDeleteDrawing(pageID: pageID, reason: error.localizedDescription)
+            }
+        }
+    }
+
+    public func loadAssetData(for assetID: UUID) throws -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let url = assetFileURL(for: assetID)
+        guard fileManager.fileExists(atPath: url.path) else {
+            return nil
+        }
+
+        do {
+            return try Data(contentsOf: url)
+        } catch {
+            throw PageStoreError.failedToLoadAsset(assetID: assetID, reason: error.localizedDescription)
+        }
+    }
+
+    public func saveAssetData(_ data: Data, for assetID: UUID) throws {
+        lock.lock()
+        defer { lock.unlock() }
+
+        do {
+            try ensureDirectoriesExist()
+            let url = assetFileURL(for: assetID)
+            try data.write(to: url, options: [.atomic])
+        } catch {
+            throw PageStoreError.failedToSaveAsset(assetID: assetID, reason: error.localizedDescription)
+        }
+    }
+
+    public func deleteAssetData(for assetIDs: [UUID]) throws {
+        lock.lock()
+        defer { lock.unlock() }
+
+        for assetID in assetIDs {
+            let url = assetFileURL(for: assetID)
+            guard fileManager.fileExists(atPath: url.path) else { continue }
+            do {
+                try fileManager.removeItem(at: url)
+            } catch {
+                throw PageStoreError.failedToDeleteAsset(assetID: assetID, reason: error.localizedDescription)
             }
         }
     }
