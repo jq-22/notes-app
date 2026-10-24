@@ -54,6 +54,18 @@ public struct PageEditorView: View {
         return page.title
     }
 
+    private var lassoModeBinding: Binding<Bool> {
+        Binding<Bool>(
+            get: { viewModel.isLassoModeActive },
+            set: { newValue in
+                viewModel.isLassoModeActive = newValue
+                if newValue {
+                    viewModel.selectedObjectID = nil
+                }
+            }
+        )
+    }
+
     public var body: some View {
         PencilCanvasScrollView(
             pageID: page.id,
@@ -61,6 +73,7 @@ public struct PageEditorView: View {
             initialDrawingData: viewModel.loadDrawingData(for: page.id),
             pageObjects: page.objects,
             selectedObjectID: viewModel.selectedObjectID,
+            isLassoModeActive: viewModel.isLassoModeActive,
             toolState: viewModel.toolState,
             isScribbleToEraseEnabled: viewModel.isScribbleToEraseEnabled,
             undoTriggerCount: undoTriggerCount,
@@ -73,6 +86,9 @@ public struct PageEditorView: View {
                 viewModel.scheduleDrawingAutosave(updatedData, for: page.id)
             },
             onSelectObject: { objectID in
+                if objectID != nil {
+                    viewModel.isLassoModeActive = false
+                }
                 viewModel.selectedObjectID = objectID
             },
             onUpdateObjectLive: { updatedObject in
@@ -86,6 +102,45 @@ public struct PageEditorView: View {
             onReplaceAllObjects: { replacedObjects in
                 viewModel.setPageObjects(
                     replacedObjects,
+                    on: page.id,
+                    in: section.id,
+                    notebookID: notebook.id
+                )
+            },
+            onCopyObject: { objectID in
+                viewModel.copySingleObjectToClipboard(
+                    id: objectID,
+                    on: page.id,
+                    in: section.id,
+                    notebookID: notebook.id
+                )
+            },
+            onCopyLassoPayload: { strokeData, strokeBounds, objectIDs in
+                viewModel.copyObjectsAndStrokesToClipboard(
+                    strokeDrawingData: strokeData,
+                    strokeBounds: strokeBounds,
+                    objectIDs: objectIDs,
+                    on: page.id,
+                    in: section.id,
+                    notebookID: notebook.id
+                )
+            },
+            onConvertLassoStrokesToObject: { strokeData, strokeBounds in
+                viewModel.isLassoModeActive = false
+                let safeW = Swift.max(PageObject.minimumDimension, strokeBounds.width)
+                let safeH = Swift.max(PageObject.minimumDimension, strokeBounds.height)
+                let newObj = PageObject(
+                    frame: CGRect(x: strokeBounds.minX, y: strokeBounds.minY, width: safeW, height: safeH),
+                    rotation: 0,
+                    kind: .strokeGroup(
+                        drawingData: strokeData,
+                        sourceBoundsWidth: safeW,
+                        sourceBoundsHeight: safeH,
+                        tintColorOverride: nil
+                    )
+                )
+                viewModel.addPageObject(
+                    newObj,
                     on: page.id,
                     in: section.id,
                     notebookID: notebook.id
@@ -113,6 +168,7 @@ public struct PageEditorView: View {
             },
             onPencilDoubleTap: {
                 viewModel.selectedObjectID = nil
+                viewModel.isLassoModeActive = false
                 viewModel.toolState.handlePencilDoubleTapToggleEraser()
             },
             onSwipeToNextPage: {
@@ -150,6 +206,7 @@ public struct PageEditorView: View {
         .onChange(of: viewModel.toolState) { _, _ in
             // Picking or adjusting an ink tool returns focus to drawing
             viewModel.selectedObjectID = nil
+            viewModel.isLassoModeActive = false
         }
         .toolbar {
             ToolbarItemGroup(placement: .topBarLeading) {
@@ -181,6 +238,27 @@ public struct PageEditorView: View {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 // Compact 4-Tool Popover Button (Pen >, Highlighter >, Rubber >, Ruler)
                 DrawingToolMenuButton(toolState: $viewModel.toolState)
+
+                // Freehand Lasso Selection Tool
+                Toggle(isOn: lassoModeBinding) {
+                    Label("Lasso", systemImage: "lasso")
+                }
+                .toggleStyle(.button)
+                .help("Lasso ink strokes and objects to move, recolour, copy, or cut")
+
+                // Paste Button (enabled whenever strokes or objects are on the clipboard)
+                if viewModel.canPasteFromClipboard {
+                    Button {
+                        viewModel.pasteFromClipboard(
+                            on: page.id,
+                            in: section.id,
+                            notebookID: notebook.id
+                        )
+                    } label: {
+                        Label("Paste", systemImage: "doc.on.clipboard")
+                    }
+                    .help("Paste copied strokes or objects onto this page")
+                }
 
                 // Insert Menu (Photos & Basic Shapes: Rectangle, Circle, Arrow, Line)
                 Menu {

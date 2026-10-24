@@ -26,6 +26,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
     public let initialDrawingData: Data?
     public let pageObjects: [PageObject]
     public let selectedObjectID: UUID?
+    public let isLassoModeActive: Bool
     public let toolState: DrawingToolState
     public let isScribbleToEraseEnabled: Bool
     public let undoTriggerCount: Int
@@ -36,6 +37,9 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
     public let onSelectObject: (UUID?) -> Void
     public let onUpdateObjectLive: (PageObject) -> Void
     public let onReplaceAllObjects: ([PageObject]) -> Void
+    public let onCopyObject: (UUID) -> Void
+    public let onCopyLassoPayload: (Data?, CGRect?, Set<UUID>) -> Void
+    public let onConvertLassoStrokesToObject: (Data, CGRect) -> Void
     public let onDuplicateObject: (UUID) -> Void
     public let onDeleteObject: (UUID) -> Void
     public let onUndoStateChanged: (Bool, Bool) -> Void
@@ -60,6 +64,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         initialDrawingData: Data?,
         pageObjects: [PageObject] = [],
         selectedObjectID: UUID? = nil,
+        isLassoModeActive: Bool = false,
         toolState: DrawingToolState,
         isScribbleToEraseEnabled: Bool,
         undoTriggerCount: Int = 0,
@@ -70,6 +75,9 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         onSelectObject: @escaping (UUID?) -> Void = { _ in },
         onUpdateObjectLive: @escaping (PageObject) -> Void = { _ in },
         onReplaceAllObjects: @escaping ([PageObject]) -> Void = { _ in },
+        onCopyObject: @escaping (UUID) -> Void = { _ in },
+        onCopyLassoPayload: @escaping (Data?, CGRect?, Set<UUID>) -> Void = { _, _, _ in },
+        onConvertLassoStrokesToObject: @escaping (Data, CGRect) -> Void = { _, _ in },
         onDuplicateObject: @escaping (UUID) -> Void = { _ in },
         onDeleteObject: @escaping (UUID) -> Void = { _ in },
         onUndoStateChanged: @escaping (Bool, Bool) -> Void = { _, _ in },
@@ -82,6 +90,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         self.initialDrawingData = initialDrawingData
         self.pageObjects = pageObjects
         self.selectedObjectID = selectedObjectID
+        self.isLassoModeActive = isLassoModeActive
         self.toolState = toolState
         self.isScribbleToEraseEnabled = isScribbleToEraseEnabled
         self.undoTriggerCount = undoTriggerCount
@@ -92,6 +101,9 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         self.onSelectObject = onSelectObject
         self.onUpdateObjectLive = onUpdateObjectLive
         self.onReplaceAllObjects = onReplaceAllObjects
+        self.onCopyObject = onCopyObject
+        self.onCopyLassoPayload = onCopyLassoPayload
+        self.onConvertLassoStrokesToObject = onConvertLassoStrokesToObject
         self.onDuplicateObject = onDuplicateObject
         self.onDeleteObject = onDeleteObject
         self.onUndoStateChanged = onUndoStateChanged
@@ -163,7 +175,16 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         canvasView.delegate = context.coordinator
         pageContainer.addSubview(canvasView)
 
-        // 4. Apple Pencil double-tap interaction -> switch to Rubber (Eraser) and back
+        // 4. Freehand Lasso overlay layer
+        let lassoHost = UIHostingController(rootView: context.coordinator.makeLassoOverlayView())
+        lassoHost.view.frame = pageContainer.bounds
+        lassoHost.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        lassoHost.view.backgroundColor = .clear
+        lassoHost.view.isOpaque = false
+        lassoHost.view.isUserInteractionEnabled = isLassoModeActive
+        pageContainer.addSubview(lassoHost.view)
+
+        // 5. Apple Pencil double-tap interaction -> switch to Rubber (Eraser) and back
         let pencilInteraction = UIPencilInteraction()
         pencilInteraction.delegate = context.coordinator
         canvasView.addInteraction(pencilInteraction)
@@ -196,10 +217,11 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         context.coordinator.pageContainerView = pageContainer
         context.coordinator.paperHostingController = paperHost
         context.coordinator.objectsHostingController = objectsHost
+        context.coordinator.lassoHostingController = lassoHost
         context.coordinator.canvasView = canvasView
 
         context.coordinator.loadPageIfNeeded(pageID: pageID, data: initialDrawingData, objects: pageObjects)
-        context.coordinator.syncObjectsLayerInteraction(isInteractive: isInteractiveObjectMode)
+        context.coordinator.syncObjectsLayerInteraction(isInteractive: isInteractiveObjectMode, isLassoActive: isLassoModeActive)
         context.coordinator.applyToolState(toolState, to: canvasView)
 
         return scrollView
@@ -210,8 +232,12 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         context.coordinator.paperHostingController?.rootView = PaperBackgroundView(paperType: paperType)
         context.coordinator.loadPageIfNeeded(pageID: pageID, data: initialDrawingData, objects: pageObjects)
         context.coordinator.recordExternalObjectAdditionOrDeletionIfNeeded(currentObjects: pageObjects)
+        if !isLassoModeActive && context.coordinator.activeLassoSelection != nil {
+            context.coordinator.activeLassoSelection = nil
+        }
         context.coordinator.objectsHostingController?.rootView = context.coordinator.makeObjectsOverlayView()
-        context.coordinator.syncObjectsLayerInteraction(isInteractive: isInteractiveObjectMode)
+        context.coordinator.lassoHostingController?.rootView = context.coordinator.makeLassoOverlayView()
+        context.coordinator.syncObjectsLayerInteraction(isInteractive: isInteractiveObjectMode, isLassoActive: isLassoModeActive)
         if let canvasView = context.coordinator.canvasView {
             context.coordinator.applyToolState(toolState, to: canvasView)
             context.coordinator.handleUndoRedoTriggersIfNeeded(
@@ -231,8 +257,10 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         weak var pageContainerView: UIView?
         var paperHostingController: UIHostingController<PaperBackgroundView>?
         var objectsHostingController: UIHostingController<PageObjectsOverlayView>?
+        var lassoHostingController: UIHostingController<LassoSelectionOverlayView>?
         weak var canvasView: PKCanvasView?
 
+        var activeLassoSelection: ActiveLassoSelection?
         private var currentLoadedPageID: UUID?
         private var isProgrammaticDrawingUpdate = false
         private var isProgrammaticObjectsUpdate = false
@@ -273,6 +301,9 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 onCommitObjectsChange: { [weak self] before, after in
                     self?.registerUndoForObjectChange(from: before, to: after, actionName: "Modify Object")
                 },
+                onCopyObject: { [weak self] objectID in
+                    self?.parent.onCopyObject(objectID)
+                },
                 onDuplicateObject: { [weak self] objectID in
                     self?.parent.onDuplicateObject(objectID)
                 },
@@ -285,15 +316,227 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             )
         }
 
-        func syncObjectsLayerInteraction(isInteractive: Bool) {
+        func makeLassoOverlayView() -> LassoSelectionOverlayView {
+            LassoSelectionOverlayView(
+                isLassoToolActive: parent.isLassoModeActive,
+                activeSelection: activeLassoSelection,
+                onCompleteLassoLoop: { [weak self] polygon in
+                    self?.handleLassoLoopCompleted(polygon)
+                },
+                onTranslateSelection: { [weak self] delta in
+                    self?.handleTranslateLassoSelection(delta)
+                },
+                onCopySelection: { [weak self] in
+                    self?.handleCopyLassoSelection()
+                },
+                onCutSelection: { [weak self] in
+                    self?.handleCutLassoSelection()
+                },
+                onRecolorSelection: { [weak self] preset in
+                    self?.handleRecolorLassoSelection(preset)
+                },
+                onConvertStrokesToObject: { [weak self] in
+                    self?.handleConvertLassoStrokesToObject()
+                },
+                onDeleteSelection: { [weak self] in
+                    self?.handleDeleteLassoSelection()
+                },
+                onClearSelection: { [weak self] in
+                    self?.activeLassoSelection = nil
+                    self?.refreshLassoHostingView()
+                }
+            )
+        }
+
+        private func refreshLassoHostingView() {
+            lassoHostingController?.rootView = makeLassoOverlayView()
+        }
+
+        private func handleLassoLoopCompleted(_ polygon: LassoPolygon) {
+            guard let canvasView else { return }
+            let strokes = canvasView.drawing.strokes
+            let strokeSamples: [[CGPoint]] = strokes.map { samplePoints(from: $0.path, maxSamples: 32) }
+            let hitStrokeIndices = polygon.selectedStrokeIndices(from: strokeSamples)
+            let hitObjectIDs = polygon.selectedObjectIDs(from: parent.pageObjects)
+
+            guard !hitStrokeIndices.isEmpty || !hitObjectIDs.isEmpty else {
+                activeLassoSelection = nil
+                refreshLassoHostingView()
+                return
+            }
+
+            // If the user lassoed a single PageObject and no ink strokes, directly select that PageObject
+            if hitStrokeIndices.isEmpty, hitObjectIDs.count == 1, let singleObjectID = hitObjectIDs.first {
+                activeLassoSelection = nil
+                parent.onSelectObject(singleObjectID)
+                return
+            }
+
+            var combinedBounds: CGRect = .null
+            for idx in hitStrokeIndices where idx < strokes.count {
+                combinedBounds = combinedBounds.union(strokes[idx].renderBounds)
+            }
+            for obj in parent.pageObjects where hitObjectIDs.contains(obj.id) {
+                combinedBounds = combinedBounds.union(obj.frame)
+            }
+
+            guard !combinedBounds.isNull, !combinedBounds.isEmpty else {
+                activeLassoSelection = nil
+                refreshLassoHostingView()
+                return
+            }
+
+            activeLassoSelection = ActiveLassoSelection(
+                strokeIndices: hitStrokeIndices,
+                objectIDs: hitObjectIDs,
+                selectionBounds: combinedBounds
+            )
+            refreshLassoHostingView()
+        }
+
+        private func handleTranslateLassoSelection(_ delta: CGSize) {
+            guard let canvasView, let selection = activeLassoSelection, !selection.isEmpty else { return }
+
+            let oldDrawing = canvasView.drawing
+            let oldObjects = parent.pageObjects
+
+            if !selection.strokeIndices.isEmpty {
+                let transform = CGAffineTransform(translationX: delta.width, y: delta.height)
+                var updatedStrokes = oldDrawing.strokes
+                for idx in selection.strokeIndices where idx < updatedStrokes.count {
+                    updatedStrokes[idx].transform = updatedStrokes[idx].transform.concatenating(transform)
+                }
+                let newDrawing = PKDrawing(strokes: updatedStrokes)
+                applyUndoableDrawingReplacement(from: oldDrawing, to: newDrawing, on: canvasView, actionName: "Move Selection")
+            }
+
+            if !selection.objectIDs.isEmpty {
+                let newObjects = oldObjects.map { obj -> PageObject in
+                    selection.objectIDs.contains(obj.id) ? obj.moved(by: delta) : obj
+                }
+                isProgrammaticObjectsUpdate = true
+                parent.onReplaceAllObjects(newObjects)
+                isProgrammaticObjectsUpdate = false
+                registerUndoForObjectChange(from: oldObjects, to: newObjects, actionName: "Move Selection")
+            }
+
+            activeLassoSelection?.selectionBounds = selection.selectionBounds.offsetBy(dx: delta.width, dy: delta.height)
+            refreshLassoHostingView()
+        }
+
+        private func handleCopyLassoSelection() {
+            guard let canvasView, let selection = activeLassoSelection, !selection.isEmpty else { return }
+            let strokes = canvasView.drawing.strokes
+            let selectedStrokes = selection.strokeIndices.sorted().compactMap { $0 < strokes.count ? strokes[$0] : nil }
+
+            var strokeData: Data?
+            var strokeBounds: CGRect?
+            if !selectedStrokes.isEmpty {
+                let subDrawing = PKDrawing(strokes: selectedStrokes)
+                strokeData = subDrawing.dataRepresentation()
+                strokeBounds = subDrawing.bounds
+            }
+
+            parent.onCopyLassoPayload(strokeData, strokeBounds, selection.objectIDs)
+        }
+
+        private func handleCutLassoSelection() {
+            handleCopyLassoSelection()
+            handleDeleteLassoSelection()
+        }
+
+        private func handleRecolorLassoSelection(_ preset: InkColorPreset) {
+            guard let canvasView, let selection = activeLassoSelection, !selection.isEmpty else { return }
+            let oldDrawing = canvasView.drawing
+            let oldObjects = parent.pageObjects
+
+            if !selection.strokeIndices.isEmpty {
+                var updatedStrokes = oldDrawing.strokes
+                for idx in selection.strokeIndices where idx < updatedStrokes.count {
+                    let oldStroke = updatedStrokes[idx]
+                    let alpha = oldStroke.ink.color.cgColor.alpha
+                    let newColor = preset.uiColor(opacity: alpha)
+                    var copy = oldStroke
+                    copy.ink = PKInk(oldStroke.ink.inkType, color: newColor)
+                    updatedStrokes[idx] = copy
+                }
+                let newDrawing = PKDrawing(strokes: updatedStrokes)
+                applyUndoableDrawingReplacement(from: oldDrawing, to: newDrawing, on: canvasView, actionName: "Recolour Selection")
+            }
+
+            if !selection.objectIDs.isEmpty {
+                let newObjects = oldObjects.map { obj -> PageObject in
+                    selection.objectIDs.contains(obj.id) ? obj.recolored(to: preset) : obj
+                }
+                isProgrammaticObjectsUpdate = true
+                parent.onReplaceAllObjects(newObjects)
+                isProgrammaticObjectsUpdate = false
+                registerUndoForObjectChange(from: oldObjects, to: newObjects, actionName: "Recolour Selection")
+            }
+            refreshLassoHostingView()
+        }
+
+        private func handleConvertLassoStrokesToObject() {
+            guard let canvasView, let selection = activeLassoSelection, !selection.strokeIndices.isEmpty else { return }
+            let oldDrawing = canvasView.drawing
+            let strokes = oldDrawing.strokes
+            let selectedStrokes = selection.strokeIndices.sorted().compactMap { $0 < strokes.count ? strokes[$0] : nil }
+            guard !selectedStrokes.isEmpty else { return }
+
+            let subDrawing = PKDrawing(strokes: selectedStrokes)
+            let bounds = subDrawing.bounds.insetBy(dx: -4, dy: -4)
+            let subData = subDrawing.dataRepresentation()
+
+            // Remove the converted strokes from the raw ink layer
+            let survivingStrokes = strokes.enumerated().compactMap { idx, stroke in
+                selection.strokeIndices.contains(idx) ? nil : stroke
+            }
+            let newDrawing = PKDrawing(strokes: survivingStrokes)
+            applyUndoableDrawingReplacement(from: oldDrawing, to: newDrawing, on: canvasView, actionName: "Convert Strokes to Object")
+
+            activeLassoSelection = nil
+            refreshLassoHostingView()
+            parent.onConvertLassoStrokesToObject(subData, bounds)
+        }
+
+        private func handleDeleteLassoSelection() {
+            guard let canvasView, let selection = activeLassoSelection, !selection.isEmpty else { return }
+            let oldDrawing = canvasView.drawing
+            let oldObjects = parent.pageObjects
+
+            if !selection.strokeIndices.isEmpty {
+                let survivingStrokes = oldDrawing.strokes.enumerated().compactMap { idx, stroke in
+                    selection.strokeIndices.contains(idx) ? nil : stroke
+                }
+                let newDrawing = PKDrawing(strokes: survivingStrokes)
+                applyUndoableDrawingReplacement(from: oldDrawing, to: newDrawing, on: canvasView, actionName: "Delete Selection")
+            }
+
+            if !selection.objectIDs.isEmpty {
+                let newObjects = oldObjects.filter { !selection.objectIDs.contains($0.id) }
+                isProgrammaticObjectsUpdate = true
+                parent.onReplaceAllObjects(newObjects)
+                isProgrammaticObjectsUpdate = false
+                registerUndoForObjectChange(from: oldObjects, to: newObjects, actionName: "Delete Selection")
+            }
+
+            activeLassoSelection = nil
+            refreshLassoHostingView()
+        }
+
+        func syncObjectsLayerInteraction(isInteractive: Bool, isLassoActive: Bool) {
             guard let pageContainerView,
                   let objectsView = objectsHostingController?.view,
+                  let lassoView = lassoHostingController?.view,
                   let canvasView else { return }
 
-            objectsView.isUserInteractionEnabled = isInteractive
-            canvasView.isUserInteractionEnabled = !isInteractive
+            objectsView.isUserInteractionEnabled = isInteractive && !isLassoActive
+            lassoView.isUserInteractionEnabled = isLassoActive
+            canvasView.isUserInteractionEnabled = !isInteractive && !isLassoActive
 
-            if isInteractive {
+            if isLassoActive {
+                pageContainerView.bringSubviewToFront(lassoView)
+            } else if isInteractive {
                 // Bring objectsView to front while manipulating handles so corner dots and floating bar sit above ink
                 pageContainerView.bringSubviewToFront(objectsView)
             } else {

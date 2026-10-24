@@ -264,4 +264,39 @@ struct LibraryViewModelTests {
         vm.deletePageObject(id: dup.id, on: pageID, in: secID, notebookID: nb.id)
         #expect(vm.selectedPage?.objects.count == 2)
     }
+
+    @Test("Copying strokes and objects and pasting into another page and notebook creates independent resizable PageObjects")
+    func crossNotebookCopyAndPaste() throws {
+        let store = InMemoryPageStore()
+        let vm = LibraryViewModel(store: store)
+
+        let nb1 = vm.createNotebook(title: "Module 1")
+        let sec1ID = try #require(nb1.sections.first?.id)
+        let page1ID = try #require(nb1.sections.first?.pages.first?.id)
+
+        let shapeObj = try #require(vm.insertBasicShape(.arrow, color: .red, strokeWidth: 3.0, on: page1ID, in: sec1ID, notebookID: nb1.id))
+        let imgBytes = Data([0xAA, 0xBB, 0xCC])
+        let imgObj = try #require(vm.insertImageObject(imageData: imgBytes, intrinsicSize: CGSize(width: 200, height: 100), on: page1ID, in: sec1ID, notebookID: nb1.id))
+
+        let sampleStrokeBytes = Data([0x10, 0x20, 0x30])
+        vm.copyObjectsAndStrokesToClipboard(
+            strokeDrawingData: sampleStrokeBytes,
+            strokeBounds: CGRect(x: 80, y: 120, width: 140, height: 90),
+            objectIDs: [shapeObj.id, imgObj.id],
+            on: page1ID,
+            in: sec1ID,
+            notebookID: nb1.id
+        )
+        #expect(vm.canPasteFromClipboard == true)
+
+        // Create a second notebook and paste onto its first page
+        let nb2 = vm.createNotebook(title: "Module 2")
+        let sec2ID = try #require(nb2.sections.first?.id)
+        let page2ID = try #require(nb2.sections.first?.pages.first?.id)
+
+        let pasted = vm.pasteFromClipboard(on: page2ID, in: sec2ID, notebookID: nb2.id)
+        #expect(pasted.count == 3) // 1 strokeGroup object + 1 arrow shape + 1 cloned image object
+        #expect(vm.selectedPage?.objects.count == 3)
+        #expect(pasted.allSatisfy { $0.id != shapeObj.id && $0.id != imgObj.id })
+    }
 }

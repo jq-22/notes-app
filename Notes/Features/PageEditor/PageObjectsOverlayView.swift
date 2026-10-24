@@ -23,6 +23,7 @@ public struct PageObjectsOverlayView: View {
     public let onSelectObject: (UUID?) -> Void
     public let onUpdateObjectLive: (PageObject) -> Void
     public let onCommitObjectsChange: ([PageObject], [PageObject]) -> Void
+    public let onCopyObject: (UUID) -> Void
     public let onDuplicateObject: (UUID) -> Void
     public let onDeleteObject: (UUID) -> Void
 
@@ -43,6 +44,7 @@ public struct PageObjectsOverlayView: View {
         onSelectObject: @escaping (UUID?) -> Void = { _ in },
         onUpdateObjectLive: @escaping (PageObject) -> Void = { _ in },
         onCommitObjectsChange: @escaping ([PageObject], [PageObject]) -> Void = { _, _ in },
+        onCopyObject: @escaping (UUID) -> Void = { _ in },
         onDuplicateObject: @escaping (UUID) -> Void = { _ in },
         onDeleteObject: @escaping (UUID) -> Void = { _ in }
     ) {
@@ -53,6 +55,7 @@ public struct PageObjectsOverlayView: View {
         self.onSelectObject = onSelectObject
         self.onUpdateObjectLive = onUpdateObjectLive
         self.onCommitObjectsChange = onCommitObjectsChange
+        self.onCopyObject = onCopyObject
         self.onDuplicateObject = onDuplicateObject
         self.onDeleteObject = onDeleteObject
     }
@@ -278,6 +281,16 @@ public struct PageObjectsOverlayView: View {
                 Divider()
                     .frame(height: 18)
             }
+
+            Button {
+                onCopyObject(object.id)
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 26, height: 26)
+            }
+            .buttonStyle(.plain)
+            .help("Copy Object")
 
             Button {
                 onDuplicateObject(object.id)

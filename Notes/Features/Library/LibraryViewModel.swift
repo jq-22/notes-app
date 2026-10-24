@@ -37,12 +37,24 @@ public final class LibraryViewModel {
             if selectedPageID != newValue {
                 flushPendingDrawings()
                 selectedObjectID = nil
+                isLassoModeActive = false
             }
         }
     }
 
     /// Currently selected `PageObject` ID on the active page (shows resize/move/rotate handles when non-nil).
     public var selectedObjectID: UUID?
+
+    /// Whether the freehand Lasso selection tool is active in the editor.
+    public var isLassoModeActive: Bool = false
+
+    /// App-wide clipboard holding copied ink strokes and/or `PageObject`s across pages and notebooks.
+    public var clipboardPayload: CanvasClipboardPayload?
+
+    public var canPasteFromClipboard: Bool {
+        guard let clipboardPayload else { return false }
+        return !clipboardPayload.isEmpty
+    }
 
     /// In-memory cache of loaded image asset data keyed by `assetID` for fast canvas and thumbnail rendering.
     private var assetCacheByID: [UUID: Data] = [:]
@@ -718,6 +730,133 @@ public final class LibraryViewModel {
         }
         drawingRevisionByPageID[targetPageID, default: 0] += 1
         saveNow()
+    }
+
+    // MARK: - Lasso Copy & Paste Across Pages and Notebooks (v1b Increment 2)
+
+    /// Copies a single `PageObject` (and its underlying image asset bytes if `.image`) to the app-wide clipboard.
+    public func copySingleObjectToClipboard(
+        id objectID: UUID,
+        on pageID: UUID? = nil,
+        in sectionID: UUID? = nil,
+        notebookID: UUID? = nil
+    ) {
+        copyObjectsAndStrokesToClipboard(
+            strokeDrawingData: nil,
+            strokeBounds: nil,
+            objectIDs: [objectID],
+            on: pageID,
+            in: sectionID,
+            notebookID: notebookID
+        )
+    }
+
+    /// Copies selected ink strokes (`strokeDrawingData` + `strokeBounds`) and/or `PageObject`s into `clipboardPayload`.
+    public func copyObjectsAndStrokesToClipboard(
+        strokeDrawingData: Data?,
+        strokeBounds: CGRect?,
+        objectIDs: Set<UUID>,
+        on pageID: UUID? = nil,
+        in sectionID: UUID? = nil,
+        notebookID: UUID? = nil
+    ) {
+        var copiedObjects: [PageObject] = []
+        var copiedAssets: [UUID: Data] = [:]
+
+        if let targetPageID = pageID ?? selectedPageID,
+           let indices = pageIndices(pageID: targetPageID, sectionID: sectionID, notebookID: notebookID) {
+            let pageObjects = notebooks[indices.notebook].sections[indices.section].pages[indices.page].objects
+            copiedObjects = pageObjects.filter { objectIDs.contains($0.id) }
+            for obj in copiedObjects {
+                if case .image(let assetID) = obj.kind, let data = loadAssetData(for: assetID) {
+                    copiedAssets[assetID] = data
+                }
+            }
+        }
+
+        let payload = CanvasClipboardPayload(
+            strokeDrawingData: strokeDrawingData,
+            strokeBounds: strokeBounds,
+            objects: copiedObjects,
+            imageAssetsByID: copiedAssets
+        )
+        guard !payload.isEmpty else { return }
+        clipboardPayload = payload
+    }
+
+    /// Pastes the contents of `clipboardPayload` onto the specified page as selectable, resizable, rotatable `PageObject`s.
+    @discardableResult
+    public func pasteFromClipboard(
+        on pageID: UUID? = nil,
+        in sectionID: UUID? = nil,
+        notebookID: UUID? = nil
+    ) -> [PageObject] {
+        guard let payload = clipboardPayload,
+              !payload.isEmpty,
+              let targetPageID = pageID ?? selectedPageID,
+              let indices = pageIndices(pageID: targetPageID, sectionID: sectionID, notebookID: notebookID) else {
+            return []
+        }
+
+        var pastedObjects: [PageObject] = []
+        let isLassoActiveBeforePaste = isLassoModeActive
+        isLassoModeActive = false
+
+        // 1. If the clipboard contains copied ink strokes, place them as a .strokeGroup PageObject
+        if let strokeData = payload.strokeDrawingData, !strokeData.isEmpty {
+            let rawBounds = payload.strokeBounds ?? CGRect(x: 160, y: 240, width: 180, height: 120)
+            let safeW = Swift.max(PageObject.minimumDimension, rawBounds.width)
+            let safeH = Swift.max(PageObject.minimumDimension, rawBounds.height)
+            let offsetFrame = CGRect(
+                x: Swift.min(Swift.max(16, rawBounds.minX + 18), PageGeometry.a4Width - safeW - 16),
+                y: Swift.min(Swift.max(16, rawBounds.minY + 18), PageGeometry.a4Height - safeH - 16),
+                width: safeW,
+                height: safeH
+            )
+            let strokeObject = PageObject(
+                frame: offsetFrame,
+                rotation: 0,
+                kind: .strokeGroup(
+                    drawingData: strokeData,
+                    sourceBoundsWidth: safeW,
+                    sourceBoundsHeight: safeH,
+                    tintColorOverride: nil
+                )
+            )
+            if let inserted = addPageObject(strokeObject, on: targetPageID, in: sectionID, notebookID: notebookID) {
+                pastedObjects.append(inserted)
+            }
+        }
+
+        // 2. If the clipboard contains copied PageObjects, clone each one (duplicating image asset bytes under a fresh UUID)
+        for copiedObj in payload.objects {
+            var newKind = copiedObj.kind
+            if case .image(let oldAssetID) = copiedObj.kind,
+               let assetBytes = payload.imageAssetsByID[oldAssetID] ?? loadAssetData(for: oldAssetID) {
+                let newAssetID = UUID()
+                try? store.saveAssetData(assetBytes, for: newAssetID)
+                assetCacheByID[newAssetID] = assetBytes
+                newKind = .image(assetID: newAssetID)
+            }
+
+            let targetX = Swift.min(Swift.max(16, copiedObj.x + 18), PageGeometry.a4Width - copiedObj.width - 16)
+            let targetY = Swift.min(Swift.max(16, copiedObj.y + 18), PageGeometry.a4Height - copiedObj.height - 16)
+            let cloned = PageObject(
+                id: UUID(),
+                frame: CGRect(x: targetX, y: targetY, width: copiedObj.width, height: copiedObj.height),
+                rotation: copiedObj.rotation,
+                zIndex: notebooks[indices.notebook].sections[indices.section].pages[indices.page].objects.count + 1,
+                kind: newKind
+            )
+            if let inserted = addPageObject(cloned, on: targetPageID, in: sectionID, notebookID: notebookID) {
+                pastedObjects.append(inserted)
+            }
+        }
+
+        if pastedObjects.isEmpty && isLassoActiveBeforePaste {
+            isLassoModeActive = true
+        }
+        return pastedObjects
     }
 
     // MARK: - Selection Helpers
