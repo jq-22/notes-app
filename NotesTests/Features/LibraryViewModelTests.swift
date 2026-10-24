@@ -238,7 +238,6 @@ struct LibraryViewModelTests {
         // 1. Insert Basic Shape (Rectangle)
         let rectObj = try #require(vm.insertBasicShape(.rectangle, color: .blue, strokeWidth: 4.0, on: pageID, in: secID, notebookID: nb.id))
         #expect(vm.selectedObjectID == rectObj.id)
-        #expect(vm.isObjectSelectModeActive == true)
         #expect(vm.selectedPage?.objects.count == 1)
 
         // 2. Move & Resize update

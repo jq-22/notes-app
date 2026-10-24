@@ -43,6 +43,20 @@ struct PageObjectTests {
         let clamped = initial.resized(corner: .bottomRight, pageDelta: CGSize(width: -500, height: -500))
         #expect(abs(clamped.width - PageObject.minimumDimension) < 0.001)
         #expect(abs(clamped.height - PageObject.minimumDimension) < 0.001)
+
+        // 5. Line & Arrow endpoint lengthening/shortening keeps the opposite end anchored
+        let lineObj = PageObject.defaultBasicShape(.arrow, color: .black, strokeWidth: 3.0)
+        #expect(lineObj.usesLinearEndpointHandles == true)
+        let originalLeftX = lineObj.frame.minX
+        let originalRightX = lineObj.frame.maxX
+
+        let lengthenedRight = lineObj.resizedEndpoint(.end, pageDelta: CGSize(width: 50, height: 0))
+        #expect(abs(lengthenedRight.frame.minX - originalLeftX) < 0.001)
+        #expect(abs(lengthenedRight.frame.maxX - (originalRightX + 50)) < 0.001)
+
+        let lengthenedLeft = lineObj.resizedEndpoint(.start, pageDelta: CGSize(width: -40, height: 0))
+        #expect(abs(lengthenedLeft.frame.maxX - originalRightX) < 0.001)
+        #expect(abs(lengthenedLeft.frame.minX - (originalLeftX - 40)) < 0.001)
     }
 
     @Test("Rotate handle angle calculation and rotated hit testing")

@@ -44,9 +44,6 @@ public final class LibraryViewModel {
     /// Currently selected `PageObject` ID on the active page (shows resize/move/rotate handles when non-nil).
     public var selectedObjectID: UUID?
 
-    /// Whether the user has toggled the Object Select / Pointer tool in the toolbar to tap and manipulate placed objects.
-    public var isObjectSelectModeActive: Bool = false
-
     /// In-memory cache of loaded image asset data keyed by `assetID` for fast canvas and thumbnail rendering.
     private var assetCacheByID: [UUID: Data] = [:]
 
@@ -632,7 +629,6 @@ public final class LibraryViewModel {
         notebooks[indices.notebook].sections[indices.section].updatedAt = now
         notebooks[indices.notebook].updatedAt = now
         selectedObjectID = inserted.id
-        isObjectSelectModeActive = true
         drawingRevisionByPageID[targetPageID, default: 0] += 1
         saveNow()
         return inserted

@@ -26,7 +26,6 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
     public let initialDrawingData: Data?
     public let pageObjects: [PageObject]
     public let selectedObjectID: UUID?
-    public let isObjectSelectModeActive: Bool
     public let toolState: DrawingToolState
     public let isScribbleToEraseEnabled: Bool
     public let undoTriggerCount: Int
@@ -61,7 +60,6 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         initialDrawingData: Data?,
         pageObjects: [PageObject] = [],
         selectedObjectID: UUID? = nil,
-        isObjectSelectModeActive: Bool = false,
         toolState: DrawingToolState,
         isScribbleToEraseEnabled: Bool,
         undoTriggerCount: Int = 0,
@@ -84,7 +82,6 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         self.initialDrawingData = initialDrawingData
         self.pageObjects = pageObjects
         self.selectedObjectID = selectedObjectID
-        self.isObjectSelectModeActive = isObjectSelectModeActive
         self.toolState = toolState
         self.isScribbleToEraseEnabled = isScribbleToEraseEnabled
         self.undoTriggerCount = undoTriggerCount
@@ -108,7 +105,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
     }
 
     private var isInteractiveObjectMode: Bool {
-        selectedObjectID != nil || isObjectSelectModeActive
+        selectedObjectID != nil
     }
 
     public func makeUIView(context: Context) -> UIScrollView {
@@ -258,7 +255,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         }
 
         func makeObjectsOverlayView() -> PageObjectsOverlayView {
-            let interactive = parent.selectedObjectID != nil || parent.isObjectSelectModeActive
+            let interactive = parent.selectedObjectID != nil
             return PageObjectsOverlayView(
                 objects: parent.pageObjects,
                 selectedObjectID: parent.selectedObjectID,
@@ -642,7 +639,6 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         @objc func handleSingleFingerTap(_ recognizer: UITapGestureRecognizer) {
             guard recognizer.state == .ended,
                   parent.selectedObjectID == nil,
-                  !parent.isObjectSelectModeActive,
                   let pageContainerView,
                   !parent.pageObjects.isEmpty else {
                 return

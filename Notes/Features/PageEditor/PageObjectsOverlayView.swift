@@ -116,55 +116,114 @@ public struct PageObjectsOverlayView: View {
         }
     }
 
-    // MARK: - Selection Chrome (Border + 4 Corner Dots + Rotate Handle)
+    // MARK: - Selection Chrome (Border + 4 Corner Dots OR Line End-Bars + Rotate Handle)
 
     @ViewBuilder
     private func selectionChrome(for object: PageObject) -> some View {
-        ZStack {
-            // Rectangle border to move
-            Rectangle()
-                .strokeBorder(Color.accentColor, lineWidth: 1.8)
-                .frame(width: object.width, height: object.height)
-                .allowsHitTesting(false)
-
-            // Rotate handle sticking out above the top-center edge
-            VStack(spacing: 0) {
-                ZStack {
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 22, height: 22)
-                        .shadow(color: .black.opacity(0.18), radius: 2, x: 0, y: 1)
-                    Circle()
-                        .strokeBorder(Color.accentColor, lineWidth: 1.8)
-                        .frame(width: 22, height: 22)
-                    Image(systemName: "arrow.trianglehead.clockwise")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Color.accentColor)
-                }
-                .frame(width: Self.cornerHitTargetSize, height: Self.cornerHitTargetSize)
-                .contentShape(Rectangle())
-                .gesture(rotateGesture(for: object))
-
+        if object.usesLinearEndpointHandles {
+            // Line & Arrow Chrome: Rotate handle in the middle + two end-bar lines at each end to lengthen/shorten
+            ZStack {
+                // Subtle center guide line
                 Rectangle()
-                    .fill(Color.accentColor)
-                    .frame(width: 1.8, height: Self.rotateHandleLength - 11)
+                    .fill(Color.accentColor.opacity(0.35))
+                    .frame(width: object.width, height: 1.2)
                     .allowsHitTesting(false)
+
+                // Rotate handle sticking out from the middle of the line/arrow
+                VStack(spacing: 0) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.white)
+                            .frame(width: 22, height: 22)
+                            .shadow(color: .black.opacity(0.18), radius: 2, x: 0, y: 1)
+                        Circle()
+                            .strokeBorder(Color.accentColor, lineWidth: 1.8)
+                            .frame(width: 22, height: 22)
+                        Image(systemName: "arrow.trianglehead.clockwise")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    .frame(width: Self.cornerHitTargetSize, height: Self.cornerHitTargetSize)
+                    .contentShape(Rectangle())
+                    .gesture(rotateGesture(for: object))
+
+                    Rectangle()
+                        .fill(Color.accentColor)
+                        .frame(width: 1.8, height: Self.rotateHandleLength - 8)
+                        .allowsHitTesting(false)
+                }
+                .offset(y: -(Self.rotateHandleLength * 0.5 + 8))
+
+                // Left end-bar handle (.start)
+                lineEndpointBarHandle(for: object, endpoint: .start)
+                    .offset(x: -object.width * 0.5)
+
+                // Right end-bar handle (.end)
+                lineEndpointBarHandle(for: object, endpoint: .end)
+                    .offset(x: object.width * 0.5)
             }
-            .offset(y: -(object.height * 0.5 + Self.rotateHandleLength * 0.5 + 5))
+        } else {
+            ZStack {
+                // Rectangle border to move
+                Rectangle()
+                    .strokeBorder(Color.accentColor, lineWidth: 1.8)
+                    .frame(width: object.width, height: object.height)
+                    .allowsHitTesting(false)
 
-            // Four corner dots to resize
-            cornerHandleDot(for: object, corner: .topLeft)
-                .offset(x: -object.width * 0.5, y: -object.height * 0.5)
+                // Rotate handle sticking out above the top-center edge
+                VStack(spacing: 0) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.white)
+                            .frame(width: 22, height: 22)
+                            .shadow(color: .black.opacity(0.18), radius: 2, x: 0, y: 1)
+                        Circle()
+                            .strokeBorder(Color.accentColor, lineWidth: 1.8)
+                            .frame(width: 22, height: 22)
+                        Image(systemName: "arrow.trianglehead.clockwise")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    .frame(width: Self.cornerHitTargetSize, height: Self.cornerHitTargetSize)
+                    .contentShape(Rectangle())
+                    .gesture(rotateGesture(for: object))
 
-            cornerHandleDot(for: object, corner: .topRight)
-                .offset(x: object.width * 0.5, y: -object.height * 0.5)
+                    Rectangle()
+                        .fill(Color.accentColor)
+                        .frame(width: 1.8, height: Self.rotateHandleLength - 11)
+                        .allowsHitTesting(false)
+                }
+                .offset(y: -(object.height * 0.5 + Self.rotateHandleLength * 0.5 + 5))
 
-            cornerHandleDot(for: object, corner: .bottomLeft)
-                .offset(x: -object.width * 0.5, y: object.height * 0.5)
+                // Four corner dots to resize
+                cornerHandleDot(for: object, corner: .topLeft)
+                    .offset(x: -object.width * 0.5, y: -object.height * 0.5)
 
-            cornerHandleDot(for: object, corner: .bottomRight)
-                .offset(x: object.width * 0.5, y: object.height * 0.5)
+                cornerHandleDot(for: object, corner: .topRight)
+                    .offset(x: object.width * 0.5, y: -object.height * 0.5)
+
+                cornerHandleDot(for: object, corner: .bottomLeft)
+                    .offset(x: -object.width * 0.5, y: object.height * 0.5)
+
+                cornerHandleDot(for: object, corner: .bottomRight)
+                    .offset(x: object.width * 0.5, y: object.height * 0.5)
+            }
         }
+    }
+
+    private func lineEndpointBarHandle(for object: PageObject, endpoint: LineEndpointHandle) -> some View {
+        ZStack {
+            Capsule()
+                .fill(Color.white)
+                .frame(width: 6, height: 24)
+                .shadow(color: .black.opacity(0.22), radius: 2, x: 0, y: 1)
+            Capsule()
+                .fill(Color.accentColor)
+                .frame(width: 3.5, height: 22)
+        }
+        .frame(width: Self.cornerHitTargetSize, height: Self.cornerHitTargetSize)
+        .contentShape(Rectangle())
+        .gesture(lineEndpointResizeGesture(for: object, endpoint: endpoint))
     }
 
     private func cornerHandleDot(for object: PageObject, corner: ObjectResizeCorner) -> some View {
@@ -350,6 +409,34 @@ public struct PageObjectsOverlayView: View {
             }
     }
 
+    private func lineEndpointResizeGesture(for object: PageObject, endpoint: LineEndpointHandle) -> some Gesture {
+        DragGesture(minimumDistance: 1, coordinateSpace: .named(Self.coordinateSpaceName))
+            .onChanged { value in
+                if dragStartObject == nil {
+                    dragStartObject = object
+                    dragStartAllObjects = objects
+                    isActivelyDraggingHandle = true
+                }
+                guard let initial = dragStartObject else { return }
+                let updated = initial.resizedEndpoint(endpoint, pageDelta: value.translation)
+                onUpdateObjectLive(updated)
+            }
+            .onEnded { value in
+                defer {
+                    dragStartObject = nil
+                    dragStartAllObjects = nil
+                    isActivelyDraggingHandle = false
+                }
+                guard let initial = dragStartObject, let before = dragStartAllObjects else { return }
+                let finalObj = initial.resizedEndpoint(endpoint, pageDelta: value.translation)
+                onUpdateObjectLive(finalObj)
+                let after = before.map { $0.id == finalObj.id ? finalObj : $0 }
+                if before != after {
+                    onCommitObjectsChange(before, after)
+                }
+            }
+    }
+
     private func rotateGesture(for object: PageObject) -> some Gesture {
         DragGesture(minimumDistance: 1, coordinateSpace: .named(Self.coordinateSpaceName))
             .onChanged { value in
@@ -409,29 +496,30 @@ public struct PageObjectContentView: View {
                     context.stroke(path, with: shading, style: style)
 
                 case .line:
+                    let midY = size.height * 0.5
                     var path = Path()
-                    path.move(to: CGPoint(x: drawRect.minX, y: drawRect.maxY))
-                    path.addLine(to: CGPoint(x: drawRect.maxX, y: drawRect.minY))
+                    path.move(to: CGPoint(x: drawRect.minX, y: midY))
+                    path.addLine(to: CGPoint(x: drawRect.maxX, y: midY))
                     context.stroke(path, with: shading, style: style)
 
                 case .arrow:
-                    let start = CGPoint(x: drawRect.minX, y: drawRect.maxY)
-                    let end = CGPoint(x: drawRect.maxX, y: drawRect.minY)
+                    let midY = size.height * 0.5
+                    let start = CGPoint(x: drawRect.minX, y: midY)
+                    let end = CGPoint(x: drawRect.maxX, y: midY)
                     var path = Path()
                     path.move(to: start)
                     path.addLine(to: end)
 
-                    let angle = atan2(end.y - start.y, end.x - start.x)
-                    let headLength = Swift.min(Swift.max(strokeWidth * 4.2, 14.0), Swift.min(drawRect.width, drawRect.height) * 0.45)
+                    let headLength = Swift.min(Swift.max(strokeWidth * 4.2, 14.0), drawRect.width * 0.42)
                     let headAngle: CGFloat = .pi / 6.0
 
                     let wing1 = CGPoint(
-                        x: end.x - headLength * cos(angle - headAngle),
-                        y: end.y - headLength * sin(angle - headAngle)
+                        x: end.x - headLength * cos(-headAngle),
+                        y: end.y - headLength * sin(-headAngle)
                     )
                     let wing2 = CGPoint(
-                        x: end.x - headLength * cos(angle + headAngle),
-                        y: end.y - headLength * sin(angle + headAngle)
+                        x: end.x - headLength * cos(headAngle),
+                        y: end.y - headLength * sin(headAngle)
                     )
                     path.move(to: end)
                     path.addLine(to: wing1)

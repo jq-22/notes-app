@@ -40,12 +40,18 @@ public enum BasicShapeKind: String, Codable, CaseIterable, Identifiable, Equatab
     }
 }
 
-/// The four corner handles shared by every `PageObject`.
+/// The four corner handles shared by rectangular/circular/image `PageObject`s.
 public enum ObjectResizeCorner: String, CaseIterable, Equatable, Sendable {
     case topLeft
     case topRight
     case bottomLeft
     case bottomRight
+}
+
+/// The two end-cap handles used by `.line` and `.arrow` shapes to lengthen/shorten from either end.
+public enum LineEndpointHandle: String, CaseIterable, Equatable, Sendable {
+    case start
+    case end
 }
 
 /// Payload type for a `PageObject`.
@@ -88,6 +94,14 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
         CGPoint(x: x + width * 0.5, y: y + height * 0.5)
     }
 
+    /// Returns `true` when this object is a 1D linear shape (`.line` or `.arrow`) that uses two end-bar handles + rotate handle instead of a 4-corner box.
+    public var usesLinearEndpointHandles: Bool {
+        if case .basicShape(let shapeKind, _, _) = kind {
+            return shapeKind == .line || shapeKind == .arrow
+        }
+        return false
+    }
+
     public init(
         id: UUID = UUID(),
         frame: CGRect,
@@ -124,7 +138,7 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
         case .circle:
             size = CGSize(width: 140, height: 140)
         case .arrow, .line:
-            size = CGSize(width: 180, height: 90)
+            size = CGSize(width: 190, height: 36)
         }
         let origin = CGPoint(
             x: (pageSize.width - size.width) * 0.5,
@@ -241,6 +255,46 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
         copy.height = newH
         copy.x = newCenter.x - newW * 0.5
         copy.y = newCenter.y - newH * 0.5
+        copy.updatedAt = now
+        return copy
+    }
+
+    /// Lengthens or shortens a `.line` or `.arrow` from either `.start` (left end) or `.end` (right end) along its rotated axis, keeping the opposite end anchored in page space.
+    public func resizedEndpoint(
+        _ endpoint: LineEndpointHandle,
+        pageDelta: CGSize,
+        minimumLength: CGFloat = 28.0,
+        now: Date = Date()
+    ) -> PageObject {
+        let cosA = cos(rotation)
+        let sinA = sin(rotation)
+
+        // Project page-space drag onto the line's local axis
+        let localDX = pageDelta.width * cosA + pageDelta.height * sinA
+
+        var minX = -width * 0.5
+        var maxX = width * 0.5
+
+        switch endpoint {
+        case .start:
+            minX = Swift.min(maxX - minimumLength, minX + localDX)
+        case .end:
+            maxX = Swift.max(minX + minimumLength, maxX + localDX)
+        }
+
+        let newW = maxX - minX
+        let localCenterOffsetX = (minX + maxX) * 0.5
+
+        // Shift center along the rotated line axis so the opposite end stays fixed
+        let newCenter = CGPoint(
+            x: center.x + localCenterOffsetX * cosA,
+            y: center.y + localCenterOffsetX * sinA
+        )
+
+        var copy = self
+        copy.width = newW
+        copy.x = newCenter.x - newW * 0.5
+        copy.y = newCenter.y - height * 0.5
         copy.updatedAt = now
         return copy
     }

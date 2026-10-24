@@ -54,20 +54,6 @@ public struct PageEditorView: View {
         return page.title
     }
 
-    private var isObjectModeActiveBinding: Binding<Bool> {
-        Binding<Bool>(
-            get: { viewModel.isObjectSelectModeActive || viewModel.selectedObjectID != nil },
-            set: { newValue in
-                viewModel.isObjectSelectModeActive = newValue
-                if !newValue {
-                    viewModel.selectedObjectID = nil
-                } else if viewModel.selectedObjectID == nil, let lastObject = page.objects.last {
-                    viewModel.selectedObjectID = lastObject.id
-                }
-            }
-        )
-    }
-
     public var body: some View {
         PencilCanvasScrollView(
             pageID: page.id,
@@ -75,7 +61,6 @@ public struct PageEditorView: View {
             initialDrawingData: viewModel.loadDrawingData(for: page.id),
             pageObjects: page.objects,
             selectedObjectID: viewModel.selectedObjectID,
-            isObjectSelectModeActive: viewModel.isObjectSelectModeActive,
             toolState: viewModel.toolState,
             isScribbleToEraseEnabled: viewModel.isScribbleToEraseEnabled,
             undoTriggerCount: undoTriggerCount,
@@ -89,7 +74,6 @@ public struct PageEditorView: View {
             },
             onSelectObject: { objectID in
                 viewModel.selectedObjectID = objectID
-                viewModel.isObjectSelectModeActive = (objectID != nil)
             },
             onUpdateObjectLive: { updatedObject in
                 viewModel.updatePageObject(
@@ -129,7 +113,6 @@ public struct PageEditorView: View {
             },
             onPencilDoubleTap: {
                 viewModel.selectedObjectID = nil
-                viewModel.isObjectSelectModeActive = false
                 viewModel.toolState.handlePencilDoubleTapToggleEraser()
             },
             onSwipeToNextPage: {
@@ -167,7 +150,6 @@ public struct PageEditorView: View {
         .onChange(of: viewModel.toolState) { _, _ in
             // Picking or adjusting an ink tool returns focus to drawing
             viewModel.selectedObjectID = nil
-            viewModel.isObjectSelectModeActive = false
         }
         .toolbar {
             ToolbarItemGroup(placement: .topBarLeading) {
@@ -199,13 +181,6 @@ public struct PageEditorView: View {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 // Compact 4-Tool Popover Button (Pen >, Highlighter >, Rubber >, Ruler)
                 DrawingToolMenuButton(toolState: $viewModel.toolState)
-
-                // Select / Manipulate Objects Toggle
-                Toggle(isOn: isObjectModeActiveBinding) {
-                    Label("Select Object", systemImage: "cursorarrow")
-                }
-                .toggleStyle(.button)
-                .help("Select, move, resize, or rotate objects on this page")
 
                 // Insert Menu (Photos & Basic Shapes: Rectangle, Circle, Arrow, Line)
                 Menu {

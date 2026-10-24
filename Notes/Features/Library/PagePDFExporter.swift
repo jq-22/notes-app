@@ -107,24 +107,23 @@ public enum PagePDFExporter {
                 case .circle:
                     cgContext.strokeEllipse(in: drawRect)
                 case .line:
-                    cgContext.move(to: CGPoint(x: drawRect.minX, y: drawRect.maxY))
-                    cgContext.addLine(to: CGPoint(x: drawRect.maxX, y: drawRect.minY))
+                    cgContext.move(to: CGPoint(x: drawRect.minX, y: 0))
+                    cgContext.addLine(to: CGPoint(x: drawRect.maxX, y: 0))
                     cgContext.strokePath()
                 case .arrow:
-                    let start = CGPoint(x: drawRect.minX, y: drawRect.maxY)
-                    let end = CGPoint(x: drawRect.maxX, y: drawRect.minY)
+                    let start = CGPoint(x: drawRect.minX, y: 0)
+                    let end = CGPoint(x: drawRect.maxX, y: 0)
                     cgContext.move(to: start)
                     cgContext.addLine(to: end)
-                    let angle = atan2(end.y - start.y, end.x - start.x)
-                    let headLength = Swift.min(Swift.max(strokeWidth * 4.2, 14.0), Swift.min(drawRect.width, drawRect.height) * 0.45)
+                    let headLength = Swift.min(Swift.max(strokeWidth * 4.2, 14.0), drawRect.width * 0.42)
                     let headAngle: CGFloat = .pi / 6.0
                     let wing1 = CGPoint(
-                        x: end.x - headLength * cos(angle - headAngle),
-                        y: end.y - headLength * sin(angle - headAngle)
+                        x: end.x - headLength * cos(-headAngle),
+                        y: end.y - headLength * sin(-headAngle)
                     )
                     let wing2 = CGPoint(
-                        x: end.x - headLength * cos(angle + headAngle),
-                        y: end.y - headLength * sin(angle + headAngle)
+                        x: end.x - headLength * cos(headAngle),
+                        y: end.y - headLength * sin(headAngle)
                     )
                     cgContext.move(to: end)
                     cgContext.addLine(to: wing1)
