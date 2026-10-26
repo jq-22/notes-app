@@ -59,6 +59,12 @@ public final class LibraryViewModel {
     /// In-memory cache of loaded image asset data keyed by `assetID` for fast canvas and thumbnail rendering.
     private var assetCacheByID: [UUID: Data] = [:]
 
+    /// In-memory cache of loaded Shape Library items keyed by `notebookID`.
+    public private(set) var shapeLibraryItemsByNotebookID: [UUID: [ShapeLibraryItem]] = [:]
+
+    /// In-memory cache of shape preview PNG images keyed by `itemID`.
+    private var shapeLibraryPreviewCache: [UUID: Data] = [:]
+
     /// Non-nil when a save or load operation fails; bound to a user-visible alert.
     public var activeErrorMessage: String?
 
@@ -857,6 +863,117 @@ public final class LibraryViewModel {
             isLassoModeActive = true
         }
         return pastedObjects
+    }
+
+    // MARK: - Shape Library Operations (v1b Increment 3)
+
+    /// Loads all saved ShapeLibraryItem models for the given notebook, caching them in memory.
+    public func loadShapeLibraryItems(for notebookID: UUID) -> [ShapeLibraryItem] {
+        if let cached = shapeLibraryItemsByNotebookID[notebookID] {
+            return cached
+        }
+        do {
+            let loaded = try store.loadShapeLibraryItems(for: notebookID)
+            shapeLibraryItemsByNotebookID[notebookID] = loaded
+            return loaded
+        } catch {
+            activeErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            return []
+        }
+    }
+
+    /// Loads the transparent PNG preview image data for a ShapeLibraryItem, caching it in memory.
+    public func loadShapeLibraryPreview(for itemID: UUID) -> Data? {
+        if let cached = shapeLibraryPreviewCache[itemID] {
+            return cached
+        }
+        do {
+            if let loaded = try store.loadShapeLibraryPreview(for: itemID) {
+                shapeLibraryPreviewCache[itemID] = loaded
+                return loaded
+            }
+            return nil
+        } catch {
+            activeErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Saves lassoed ink strokes to a notebook's Shape Library with a custom label and transparent preview PNG.
+    @discardableResult
+    public func saveToShapeLibrary(
+        label: String,
+        strokeDrawingData: Data,
+        sourceBounds: CGRect,
+        previewPNGData: Data,
+        notebookID: UUID? = nil
+    ) -> ShapeLibraryItem? {
+        guard let targetNotebookID = notebookID ?? selectedNotebookID else { return nil }
+
+        let item = ShapeLibraryItem(
+            notebookID: targetNotebookID,
+            label: label,
+            strokeDrawingData: strokeDrawingData,
+            sourceBoundsWidth: sourceBounds.width,
+            sourceBoundsHeight: sourceBounds.height
+        )
+
+        do {
+            try store.saveShapeLibraryItem(item, previewPNGData: previewPNGData)
+            shapeLibraryPreviewCache[item.id] = previewPNGData
+            var currentItems = shapeLibraryItemsByNotebookID[targetNotebookID] ?? (try? store.loadShapeLibraryItems(for: targetNotebookID)) ?? []
+            if let idx = currentItems.firstIndex(where: { $0.id == item.id }) {
+                currentItems[idx] = item
+            } else {
+                currentItems.insert(item, at: 0)
+            }
+            shapeLibraryItemsByNotebookID[targetNotebookID] = currentItems
+            return item
+        } catch {
+            activeErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Deletes an item and its preview from the notebook's Shape Library.
+    public func deleteShapeLibraryItem(id itemID: UUID, notebookID: UUID) {
+        do {
+            try store.deleteShapeLibraryItem(id: itemID, notebookID: notebookID)
+            shapeLibraryPreviewCache.removeValue(forKey: itemID)
+            if var currentItems = shapeLibraryItemsByNotebookID[notebookID] {
+                currentItems.removeAll { $0.id == itemID }
+                shapeLibraryItemsByNotebookID[notebookID] = currentItems
+            }
+        } catch {
+            activeErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    /// Places a shape from the Shape Library onto the page as an interactive, resizable, rotatable `.strokeGroup` `PageObject`.
+    @discardableResult
+    public func placeShapeLibraryItem(
+        _ item: ShapeLibraryItem,
+        on pageID: UUID? = nil,
+        in sectionID: UUID? = nil,
+        notebookID: UUID? = nil
+    ) -> PageObject? {
+        let safeW = Swift.max(PageObject.minimumDimension, item.sourceBoundsWidth)
+        let safeH = Swift.max(PageObject.minimumDimension, item.sourceBoundsHeight)
+        let origin = CGPoint(
+            x: (PageGeometry.a4Width - safeW) * 0.5,
+            y: (PageGeometry.a4Height - safeH) * 0.38
+        )
+        let object = PageObject(
+            frame: CGRect(origin: origin, size: CGSize(width: safeW, height: safeH)),
+            rotation: 0,
+            kind: .strokeGroup(
+                drawingData: item.strokeDrawingData,
+                sourceBoundsWidth: safeW,
+                sourceBoundsHeight: safeH,
+                tintColorOverride: nil
+            )
+        )
+        return addPageObject(object, on: pageID, in: sectionID, notebookID: notebookID)
     }
 
     // MARK: - Selection Helpers

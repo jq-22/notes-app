@@ -40,6 +40,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
     public let onCopyObject: (UUID) -> Void
     public let onCopyLassoPayload: (Data?, CGRect?, Set<UUID>) -> Void
     public let onConvertLassoStrokesToObject: (Data, CGRect) -> Void
+    public let onSaveLassoStrokesToLibrary: (Data, CGRect, Data) -> Void
     public let onDuplicateObject: (UUID) -> Void
     public let onDeleteObject: (UUID) -> Void
     public let onUndoStateChanged: (Bool, Bool) -> Void
@@ -78,6 +79,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         onCopyObject: @escaping (UUID) -> Void = { _ in },
         onCopyLassoPayload: @escaping (Data?, CGRect?, Set<UUID>) -> Void = { _, _, _ in },
         onConvertLassoStrokesToObject: @escaping (Data, CGRect) -> Void = { _, _ in },
+        onSaveLassoStrokesToLibrary: @escaping (Data, CGRect, Data) -> Void = { _, _, _ in },
         onDuplicateObject: @escaping (UUID) -> Void = { _ in },
         onDeleteObject: @escaping (UUID) -> Void = { _ in },
         onUndoStateChanged: @escaping (Bool, Bool) -> Void = { _, _ in },
@@ -104,6 +106,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         self.onCopyObject = onCopyObject
         self.onCopyLassoPayload = onCopyLassoPayload
         self.onConvertLassoStrokesToObject = onConvertLassoStrokesToObject
+        self.onSaveLassoStrokesToLibrary = onSaveLassoStrokesToLibrary
         self.onDuplicateObject = onDuplicateObject
         self.onDeleteObject = onDeleteObject
         self.onUndoStateChanged = onUndoStateChanged
@@ -338,6 +341,9 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 onConvertStrokesToObject: { [weak self] in
                     self?.handleConvertLassoStrokesToObject()
                 },
+                onSaveStrokesToLibrary: { [weak self] in
+                    self?.handleSaveLassoStrokesToLibrary()
+                },
                 onDeleteSelection: { [weak self] in
                     self?.handleDeleteLassoSelection()
                 },
@@ -497,6 +503,26 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             activeLassoSelection = nil
             refreshLassoHostingView()
             parent.onConvertLassoStrokesToObject(subData, bounds)
+        }
+
+        private func handleSaveLassoStrokesToLibrary() {
+            guard let canvasView, let selection = activeLassoSelection, !selection.strokeIndices.isEmpty else { return }
+            let strokes = canvasView.drawing.strokes
+            let selectedStrokes = selection.strokeIndices.sorted().compactMap { $0 < strokes.count ? strokes[$0] : nil }
+            guard !selectedStrokes.isEmpty else { return }
+
+            let subDrawing = PKDrawing(strokes: selectedStrokes)
+            let bounds = subDrawing.bounds.insetBy(dx: -4, dy: -4)
+            let subData = subDrawing.dataRepresentation()
+
+            let lightTraits = UITraitCollection(userInterfaceStyle: .light)
+            var previewPNG: Data?
+            lightTraits.performAsCurrent {
+                let img = subDrawing.image(from: bounds, scale: 2.0)
+                previewPNG = img.pngData()
+            }
+
+            parent.onSaveLassoStrokesToLibrary(subData, bounds, previewPNG ?? Data())
         }
 
         private func handleDeleteLassoSelection() {

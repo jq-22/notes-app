@@ -20,6 +20,9 @@ public enum PageStoreError: LocalizedError, Equatable, Sendable {
     case failedToLoadAsset(assetID: UUID, reason: String)
     case failedToSaveAsset(assetID: UUID, reason: String)
     case failedToDeleteAsset(assetID: UUID, reason: String)
+    case failedToLoadShapeLibrary(notebookID: UUID, reason: String)
+    case failedToSaveShapeLibraryItem(itemID: UUID, reason: String)
+    case failedToDeleteShapeLibraryItem(itemID: UUID, reason: String)
 
     public var errorDescription: String? {
         switch self {
@@ -39,6 +42,12 @@ public enum PageStoreError: LocalizedError, Equatable, Sendable {
             return "Could not save image asset: \(reason)"
         case .failedToDeleteAsset(_, let reason):
             return "Could not delete image asset: \(reason)"
+        case .failedToLoadShapeLibrary(_, let reason):
+            return "Could not load shape library: \(reason)"
+        case .failedToSaveShapeLibraryItem(_, let reason):
+            return "Could not save shape to library: \(reason)"
+        case .failedToDeleteShapeLibraryItem(_, let reason):
+            return "Could not delete shape from library: \(reason)"
         }
     }
 }
@@ -68,10 +77,26 @@ public protocol PageStore: Sendable {
 
     /// Removes stored binary asset data for the given asset UUIDs (if present).
     func deleteAssetData(for assetIDs: [UUID]) throws
+
+    /// Loads all saved ShapeLibraryItem metadata for a given notebook UUID.
+    func loadShapeLibraryItems(for notebookID: UUID) throws -> [ShapeLibraryItem]
+
+    /// Atomically saves a ShapeLibraryItem and its transparent preview PNG image.
+    func saveShapeLibraryItem(_ item: ShapeLibraryItem, previewPNGData: Data) throws
+
+    /// Deletes a ShapeLibraryItem and its preview image from a notebook's library.
+    func deleteShapeLibraryItem(id itemID: UUID, notebookID: UUID) throws
+
+    /// Loads the transparent PNG preview image data for a ShapeLibraryItem.
+    func loadShapeLibraryPreview(for itemID: UUID) throws -> Data?
 }
 
 public extension PageStore {
     func loadAssetData(for assetID: UUID) throws -> Data? { nil }
     func saveAssetData(_ data: Data, for assetID: UUID) throws {}
     func deleteAssetData(for assetIDs: [UUID]) throws {}
+    func loadShapeLibraryItems(for notebookID: UUID) throws -> [ShapeLibraryItem] { [] }
+    func saveShapeLibraryItem(_ item: ShapeLibraryItem, previewPNGData: Data) throws {}
+    func deleteShapeLibraryItem(id itemID: UUID, notebookID: UUID) throws {}
+    func loadShapeLibraryPreview(for itemID: UUID) throws -> Data? { nil }
 }

@@ -50,6 +50,14 @@ public final class FilePageStore: PageStore, @unchecked Sendable {
         baseDirectoryURL.appendingPathComponent("Assets", isDirectory: true)
     }
 
+    private var shapeLibraryDirectoryURL: URL {
+        baseDirectoryURL.appendingPathComponent("ShapeLibrary", isDirectory: true)
+    }
+
+    private var shapePreviewsDirectoryURL: URL {
+        shapeLibraryDirectoryURL.appendingPathComponent("Previews", isDirectory: true)
+    }
+
     private func drawingFileURL(for pageID: UUID) -> URL {
         drawingsDirectoryURL.appendingPathComponent("\(pageID.uuidString).pkdrawing", isDirectory: false)
     }
@@ -58,10 +66,20 @@ public final class FilePageStore: PageStore, @unchecked Sendable {
         assetsDirectoryURL.appendingPathComponent("\(assetID.uuidString).dat", isDirectory: false)
     }
 
+    private func shapeLibraryFileURL(for notebookID: UUID) -> URL {
+        shapeLibraryDirectoryURL.appendingPathComponent("\(notebookID.uuidString).json", isDirectory: false)
+    }
+
+    private func shapePreviewFileURL(for itemID: UUID) -> URL {
+        shapePreviewsDirectoryURL.appendingPathComponent("\(itemID.uuidString).png", isDirectory: false)
+    }
+
     private func ensureDirectoriesExist() throws {
         try fileManager.createDirectory(at: baseDirectoryURL, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: drawingsDirectoryURL, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: assetsDirectoryURL, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: shapeLibraryDirectoryURL, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: shapePreviewsDirectoryURL, withIntermediateDirectories: true)
     }
 
     public func loadNotebooks() throws -> [Notebook] {
@@ -180,5 +198,88 @@ public final class FilePageStore: PageStore, @unchecked Sendable {
                 throw PageStoreError.failedToDeleteAsset(assetID: assetID, reason: error.localizedDescription)
             }
         }
+    }
+
+    public func loadShapeLibraryItems(for notebookID: UUID) throws -> [ShapeLibraryItem] {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let url = shapeLibraryFileURL(for: notebookID)
+        guard fileManager.fileExists(atPath: url.path) else {
+            return []
+        }
+
+        do {
+            let data = try Data(contentsOf: url)
+            return try decoder.decode([ShapeLibraryItem].self, from: data)
+        } catch {
+            throw PageStoreError.failedToLoadShapeLibrary(notebookID: notebookID, reason: error.localizedDescription)
+        }
+    }
+
+    public func saveShapeLibraryItem(_ item: ShapeLibraryItem, previewPNGData: Data) throws {
+        lock.lock()
+        defer { lock.unlock() }
+
+        do {
+            try ensureDirectoriesExist()
+
+            // 1. Save transparent PNG preview
+            let previewURL = shapePreviewFileURL(for: item.id)
+            try previewPNGData.write(to: previewURL, options: [.atomic])
+
+            // 2. Update notebook's shape library JSON list
+            let libraryURL = shapeLibraryFileURL(for: item.notebookID)
+            var items: [ShapeLibraryItem] = []
+            if fileManager.fileExists(atPath: libraryURL.path) {
+                let existingData = try Data(contentsOf: libraryURL)
+                items = (try? decoder.decode([ShapeLibraryItem].self, from: existingData)) ?? []
+            }
+            if let index = items.firstIndex(where: { $0.id == item.id }) {
+                items[index] = item
+            } else {
+                items.insert(item, at: 0)
+            }
+            let data = try encoder.encode(items)
+            try data.write(to: libraryURL, options: [.atomic])
+        } catch {
+            throw PageStoreError.failedToSaveShapeLibraryItem(itemID: item.id, reason: error.localizedDescription)
+        }
+    }
+
+    public func deleteShapeLibraryItem(id itemID: UUID, notebookID: UUID) throws {
+        lock.lock()
+        defer { lock.unlock() }
+
+        do {
+            // 1. Remove preview file
+            let previewURL = shapePreviewFileURL(for: itemID)
+            if fileManager.fileExists(atPath: previewURL.path) {
+                try? fileManager.removeItem(at: previewURL)
+            }
+
+            // 2. Remove from notebook's shape library JSON list
+            let libraryURL = shapeLibraryFileURL(for: notebookID)
+            if fileManager.fileExists(atPath: libraryURL.path) {
+                let existingData = try Data(contentsOf: libraryURL)
+                var items = (try? decoder.decode([ShapeLibraryItem].self, from: existingData)) ?? []
+                items.removeAll { $0.id == itemID }
+                let data = try encoder.encode(items)
+                try data.write(to: libraryURL, options: [.atomic])
+            }
+        } catch {
+            throw PageStoreError.failedToDeleteShapeLibraryItem(itemID: itemID, reason: error.localizedDescription)
+        }
+    }
+
+    public func loadShapeLibraryPreview(for itemID: UUID) throws -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let url = shapePreviewFileURL(for: itemID)
+        guard fileManager.fileExists(atPath: url.path) else {
+            return nil
+        }
+        return try? Data(contentsOf: url)
     }
 }

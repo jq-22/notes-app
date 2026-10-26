@@ -26,6 +26,10 @@ public struct PageEditorView: View {
     @State private var redoTriggerCount: Int = 0
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var isPhotoPickerPresented: Bool = false
+    @State private var isShapeLibraryPresented: Bool = false
+    @State private var isSaveShapePromptPresented: Bool = false
+    @State private var shapeLabelDraft: String = "Shape"
+    @State private var pendingSaveStrokes: (data: Data, bounds: CGRect, png: Data)?
 
     public init(
         viewModel: LibraryViewModel,
@@ -146,6 +150,11 @@ public struct PageEditorView: View {
                     notebookID: notebook.id
                 )
             },
+            onSaveLassoStrokesToLibrary: { strokeData, strokeBounds, previewPNG in
+                pendingSaveStrokes = (strokeData, strokeBounds, previewPNG)
+                shapeLabelDraft = "Shape"
+                isSaveShapePromptPresented = true
+            },
             onDuplicateObject: { objectID in
                 viewModel.duplicatePageObject(
                     id: objectID,
@@ -186,6 +195,28 @@ public struct PageEditorView: View {
             selection: $selectedPhotoItem,
             matching: .images
         )
+        .alert("Save to Shape Library", isPresented: $isSaveShapePromptPresented) {
+            TextField("Shape Name", text: $shapeLabelDraft)
+            Button("Cancel", role: .cancel) {
+                pendingSaveStrokes = nil
+            }
+            Button("Save") {
+                if let payload = pendingSaveStrokes {
+                    let trimmed = shapeLabelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let finalLabel = trimmed.isEmpty ? "Shape" : trimmed
+                    viewModel.saveToShapeLibrary(
+                        label: finalLabel,
+                        strokeDrawingData: payload.data,
+                        sourceBounds: payload.bounds,
+                        previewPNGData: payload.png,
+                        notebookID: notebook.id
+                    )
+                }
+                pendingSaveStrokes = nil
+            }
+        } message: {
+            Text("Enter a name for this shape to reuse it across your notes.")
+        }
         .onChange(of: selectedPhotoItem) { _, newItem in
             guard let newItem else { return }
             Task { @MainActor in
@@ -288,6 +319,32 @@ public struct PageEditorView: View {
                     Label("Insert", systemImage: "plus.square.on.square")
                 }
                 .help("Insert an image or basic shape (Rectangle, Circle, Arrow, Line)")
+
+                // Notebook Shape Library Popover Button
+                Button {
+                    isShapeLibraryPresented = true
+                } label: {
+                    Label("Shape Library", systemImage: "square.stack.3d.up")
+                }
+                .help("Browse and insert saved diagram shapes from your notebook library")
+                .popover(isPresented: $isShapeLibraryPresented) {
+                    ShapeLibraryPopoverView(
+                        viewModel: viewModel,
+                        currentNotebook: notebook,
+                        onPlaceShape: { item in
+                            viewModel.isLassoModeActive = false
+                            viewModel.placeShapeLibraryItem(
+                                item,
+                                on: page.id,
+                                in: section.id,
+                                notebookID: notebook.id
+                            )
+                        },
+                        onDismiss: {
+                            isShapeLibraryPresented = false
+                        }
+                    )
+                }
 
                 Toggle(isOn: $viewModel.isScribbleToEraseEnabled) {
                     Label(

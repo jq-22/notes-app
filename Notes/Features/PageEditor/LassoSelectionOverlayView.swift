@@ -22,6 +22,7 @@ public struct LassoSelectionOverlayView: View {
     public let onCutSelection: () -> Void
     public let onRecolorSelection: (InkColorPreset) -> Void
     public let onConvertStrokesToObject: () -> Void
+    public let onSaveStrokesToLibrary: () -> Void
     public let onDeleteSelection: () -> Void
     public let onClearSelection: () -> Void
 
@@ -40,6 +41,7 @@ public struct LassoSelectionOverlayView: View {
         onCutSelection: @escaping () -> Void,
         onRecolorSelection: @escaping (InkColorPreset) -> Void,
         onConvertStrokesToObject: @escaping () -> Void,
+        onSaveStrokesToLibrary: @escaping () -> Void = {},
         onDeleteSelection: @escaping () -> Void,
         onClearSelection: @escaping () -> Void
     ) {
@@ -51,6 +53,7 @@ public struct LassoSelectionOverlayView: View {
         self.onCutSelection = onCutSelection
         self.onRecolorSelection = onRecolorSelection
         self.onConvertStrokesToObject = onConvertStrokesToObject
+        self.onSaveStrokesToLibrary = onSaveStrokesToLibrary
         self.onDeleteSelection = onDeleteSelection
         self.onClearSelection = onClearSelection
     }
@@ -177,6 +180,16 @@ public struct LassoSelectionOverlayView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Resize / Rotate as Object")
+
+                Button {
+                    onSaveStrokesToLibrary()
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 26, height: 26)
+                }
+                .buttonStyle(.plain)
+                .help("Save to Shape Library")
             }
 
             Button(role: .destructive) {

@@ -2,7 +2,7 @@
 
 ## Overview
 Native iPadOS handwriting and structured notes app ("Notion with Apple Pencil").
-Current milestone: **v1a — working notebook** (Complete: Notebook → Section → Page hierarchy, navigation, paper layer, PencilKit ink canvas, 4-tool picker, zoom/pan, scribble-to-erase with 1-step undo, live sidebar thumbnails, and debounced/background autosave).
+Current milestone: **v1b — objects and library** (Complete: PageObject domain model, basic shapes, image insertion, transparent handles, freehand lasso tool with copy/cut/duplicate/recolour/convert-to-object/delete, cross-page/notebook clipboard paste, and Notebook Shape Library with previews and notebook switcher).
 
 ## Directory & Module Map
 ```
@@ -11,25 +11,36 @@ Notes/
     NotesApp.swift                    Entry point & composition root; injects FilePageStore into LibraryViewModel
   Domain/                             Pure Swift models & logic (no UI or persistence imports)
     PaperType.swift                   PaperType (lined, squared, blank) & PageGeometry (A4 595x842 pt constants)
-    Page.swift                        Page metadata value type (UUID, title, optional PaperType override, timestamps)
+    Page.swift                        Page metadata value type (UUID, title, optional PaperType override, [PageObject], timestamps)
+    PageObject.swift                  PageObject model (UUID, frame, rotation, kind: basicShape, image, strokeGroup), resize/rotate geometry, hit-testing
+    LassoSelection.swift              LassoPolygon ray-casting point-in-polygon, ActiveLassoSelection, CanvasClipboardPayload
+    ShapeLibraryItem.swift            ShapeLibraryItem value type (UUID, notebookID, label, strokeDrawingData, dimensions, timestamps)
     NoteSection.swift                 Section value type holding ordered [Page] & pure move/insert/delete logic
     Notebook.swift                    Root aggregate holding ordered [NoteSection] and default PaperType
     ScribbleClassifier.swift          Pure geometric scribble-to-erase classifier with named threshold constants
-    DrawingToolState.swift            Pure value model for the 4-tool menu (Pen, Highlighter, Rubber, Ruler), widths/opacities/colours (explicit Black & White), and Pencil double-tap
+    DrawingToolState.swift            Pure value model for the 4-tool menu (Pen, Highlighter, Rubber, Ruler), widths/opacities/colours, and Pencil double-tap
   Persistence/                        Storage boundary & implementation (depends on Domain + Foundation only)
     PageStore.swift                   PageStore protocol + PageStoreError
-    FilePageStore.swift               Atomic file persistence (notebooks.json + Drawings/<page-uuid>.pkdrawing)
+    FilePageStore.swift               Atomic file persistence:
+                                        - notebooks.json
+                                        - Drawings/<page-uuid>.pkdrawing
+                                        - Assets/<asset-uuid>.dat
+                                        - ShapeLibrary/<notebook-uuid>.json
+                                        - ShapeLibrary/Previews/<item-uuid>.png
   Features/
     Library/
-      LibraryViewModel.swift          @Observable @MainActor state, CRUD, debounced drawing autosave, & error surfacing
+      LibraryViewModel.swift          @Observable @MainActor state, CRUD, PageObjects/clipboard/ShapeLibrary management, debounced autosave, & error surfacing
       LibraryRootView.swift           3-column NavigationSplitView (Notebooks -> Sections & Pages -> Detail) + multi-page selection
       PageThumbnailView.swift         A4 aspect-ratio sidebar thumbnail showing paper pattern, live PKDrawing preview, & page index
-      PagePDFExporter.swift           Multi-page A4 vector PDF exporter rendering paper background + PKDrawing strokes
+      PagePDFExporter.swift           Multi-page A4 vector PDF exporter rendering paper background + PKDrawing strokes + PageObjects
     PageEditor/
       PaperBackgroundView.swift       SwiftUI Canvas drawing lined/squared/blank background layer (never touches ink)
-      PencilCanvasScrollView.swift    UIKit UIScrollView (fit-to-width, ±8% snap, 0.42s slide page turn) + PKCanvasView (.monoline ballpoint pen, .light style, 0.75x ruler, scribble-to-erase)
+      PageObjectsOverlayView.swift    Interactive overlay for PageObjects (corner resize dots, rotation handle, line/arrow end bars, live move)
+      LassoSelectionOverlayView.swift Freehand lasso overlay (dotted path tracing, selection drag, floating toolbar with Recolour, Copy, Cut, Convert, Save to Library, Delete)
+      ShapeLibraryPopoverView.swift   Reusable shape library browser with notebook switcher, PNG preview cards, tap to place, and context menu delete
+      PencilCanvasScrollView.swift    UIKit UIScrollView (fit-to-width, ±8% snap, 0.42s slide page turn) + PKCanvasView + PageObjectsOverlayView + LassoSelectionOverlayView
       DrawingToolMenuButton.swift     Compact top-bar tool button & popover matching owner's 4-row sketch (Pen >, Highlighter >, Rubber >, Ruler)
-      PageEditorView.swift            Page editor container with toolbar controls (Full Screen, Undo/Redo, 4-Tool menu, Scribble toggle, paper picker)
+      PageEditorView.swift            Page editor container with toolbar controls (Full Screen, Undo/Redo, 4-Tool menu, Lasso toggle, Paste, Insert Menu, Shape Library, Scribble toggle, paper picker)
   DesignSystem/
     Theme.swift                       Centralized colours, spacing, fonts, and corner radii (light/dark adaptive)
   docs/
@@ -39,12 +50,14 @@ Notes/
 NotesTests/
   Domain/
     NotebookHierarchyTests.swift      Unit tests for Notebook, NoteSection, Page, PaperType
+    PageObjectTests.swift             Unit tests for PageObject resize, rotation, hit-testing, line handles, and backward-compatible v1a JSON decoding
+    LassoSelectionTests.swift         Unit tests for Lasso polygon ray-casting and stroke/object enclosure
     ScribbleClassifierTests.swift     Synthetic stroke unit tests (scribble, straight line, circle, zigzag 'W'/'M', overlap, toggle)
     DrawingToolStateTests.swift       Unit tests for 4-tool state, Apple Pencil double-tap toggle, clamping, and input policy touch counts
   Persistence/
-    FilePageStoreTests.swift          Unit tests for FilePageStore round-trip, drawing separation, and error paths
+    FilePageStoreTests.swift          Unit tests for FilePageStore round-trip, drawing separation, asset storage, shape library lifecycle, and error paths
   Features/
-    LibraryViewModelTests.swift       Unit tests for LibraryViewModel CRUD, debounced autosave, and error surfacing
+    LibraryViewModelTests.swift       Unit tests for LibraryViewModel CRUD, PageObjects, cross-notebook clipboard copy/paste, shape library lifecycle, and error surfacing
 ```
 
 ## Dependency Direction

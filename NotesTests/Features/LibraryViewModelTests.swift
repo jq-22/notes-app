@@ -13,6 +13,8 @@ final class InMemoryPageStore: PageStore, @unchecked Sendable {
     var storedNotebooks: [Notebook] = []
     var storedDrawings: [UUID: Data] = [:]
     var storedAssets: [UUID: Data] = [:]
+    var storedShapeItems: [UUID: [ShapeLibraryItem]] = [:]
+    var storedShapePreviews: [UUID: Data] = [:]
     var shouldFailSaves = false
     var shouldFailLoads = false
 
@@ -62,6 +64,36 @@ final class InMemoryPageStore: PageStore, @unchecked Sendable {
         for id in assetIDs {
             storedAssets.removeValue(forKey: id)
         }
+    }
+
+    func loadShapeLibraryItems(for notebookID: UUID) throws -> [ShapeLibraryItem] {
+        if shouldFailLoads {
+            throw PageStoreError.failedToLoadShapeLibrary(notebookID: notebookID, reason: "Simulated failure")
+        }
+        return storedShapeItems[notebookID] ?? []
+    }
+
+    func saveShapeLibraryItem(_ item: ShapeLibraryItem, previewPNGData: Data) throws {
+        if shouldFailSaves {
+            throw PageStoreError.failedToSaveShapeLibraryItem(itemID: item.id, reason: "Simulated failure")
+        }
+        var items = storedShapeItems[item.notebookID] ?? []
+        if let idx = items.firstIndex(where: { $0.id == item.id }) {
+            items[idx] = item
+        } else {
+            items.insert(item, at: 0)
+        }
+        storedShapeItems[item.notebookID] = items
+        storedShapePreviews[item.id] = previewPNGData
+    }
+
+    func deleteShapeLibraryItem(id itemID: UUID, notebookID: UUID) throws {
+        storedShapeItems[notebookID]?.removeAll { $0.id == itemID }
+        storedShapePreviews.removeValue(forKey: itemID)
+    }
+
+    func loadShapeLibraryPreview(for itemID: UUID) throws -> Data? {
+        storedShapePreviews[itemID]
     }
 }
 
@@ -298,5 +330,56 @@ struct LibraryViewModelTests {
         #expect(pasted.count == 3) // 1 strokeGroup object + 1 arrow shape + 1 cloned image object
         #expect(vm.selectedPage?.objects.count == 3)
         #expect(pasted.allSatisfy { $0.id != shapeObj.id && $0.id != imgObj.id })
+    }
+
+    @Test("Shape Library saving, loading, placing as PageObject, and deleting")
+    func shapeLibraryOperations() throws {
+        let store = InMemoryPageStore()
+        let vm = LibraryViewModel(store: store)
+
+        let nb = vm.createNotebook(title: "Architecture")
+        let secID = try #require(nb.sections.first?.id)
+        let pageID = try #require(nb.sections.first?.pages.first?.id)
+
+        let sampleDrawingData = Data([0xDE, 0xAD, 0xBE, 0xEF])
+        let samplePNGData = Data([0x89, 0x50, 0x4E, 0x47])
+        let bounds = CGRect(x: 100, y: 150, width: 220, height: 180)
+
+        // 1. Save to Shape Library
+        let savedItem = try #require(vm.saveToShapeLibrary(
+            label: "Microservice Node",
+            strokeDrawingData: sampleDrawingData,
+            sourceBounds: bounds,
+            previewPNGData: samplePNGData,
+            notebookID: nb.id
+        ))
+
+        #expect(savedItem.label == "Microservice Node")
+        #expect(savedItem.sourceBoundsWidth == 220)
+        #expect(savedItem.sourceBoundsHeight == 180)
+
+        // 2. Load shape library items & preview
+        let items = vm.loadShapeLibraryItems(for: nb.id)
+        #expect(items.count == 1)
+        #expect(items.first?.id == savedItem.id)
+        #expect(vm.loadShapeLibraryPreview(for: savedItem.id) == samplePNGData)
+
+        // 3. Place shape onto page as an interactive strokeGroup PageObject
+        let placedObj = try #require(vm.placeShapeLibraryItem(savedItem, on: pageID, in: secID, notebookID: nb.id))
+        #expect(vm.selectedPage?.objects.count == 1)
+        #expect(placedObj.frame.width == 220)
+        #expect(placedObj.frame.height == 180)
+        if case .strokeGroup(let data, let w, let h, let tint) = placedObj.kind {
+            #expect(data == sampleDrawingData)
+            #expect(w == 220)
+            #expect(h == 180)
+            #expect(tint == nil)
+        } else {
+            Issue.record("Expected strokeGroup kind for placed shape library item")
+        }
+
+        // 4. Delete shape library item
+        vm.deleteShapeLibraryItem(id: savedItem.id, notebookID: nb.id)
+        #expect(vm.loadShapeLibraryItems(for: nb.id).isEmpty)
     }
 }

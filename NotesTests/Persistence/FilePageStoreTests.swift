@@ -95,4 +95,53 @@ struct FilePageStoreTests {
         try store.deleteAssetData(for: [assetID])
         #expect(try store.loadAssetData(for: assetID) == nil)
     }
+
+    @Test("Shape Library items and preview images are saved, loaded, updated, and deleted independently")
+    func shapeLibraryPersistenceLifecycle() throws {
+        let dir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = FilePageStore(baseDirectoryURL: dir)
+        let notebookID = UUID()
+
+        #expect(try store.loadShapeLibraryItems(for: notebookID).isEmpty)
+
+        let item1 = ShapeLibraryItem(
+            notebookID: notebookID,
+            label: "Decision Diamond",
+            strokeDrawingData: Data([0x01, 0x02, 0x03]),
+            sourceBoundsWidth: 150,
+            sourceBoundsHeight: 120
+        )
+        let preview1 = Data([0x89, 0x50, 0x4E, 0x47, 0x01])
+        try store.saveShapeLibraryItem(item1, previewPNGData: preview1)
+
+        let loaded = try store.loadShapeLibraryItems(for: notebookID)
+        #expect(loaded.count == 1)
+        #expect(loaded.first?.id == item1.id)
+        #expect(loaded.first?.label == "Decision Diamond")
+        #expect(try store.loadShapeLibraryPreview(for: item1.id) == preview1)
+
+        // Add a second item
+        let item2 = ShapeLibraryItem(
+            notebookID: notebookID,
+            label: "Process Box",
+            strokeDrawingData: Data([0x04, 0x05]),
+            sourceBoundsWidth: 200,
+            sourceBoundsHeight: 100
+        )
+        let preview2 = Data([0x89, 0x50, 0x4E, 0x47, 0x02])
+        try store.saveShapeLibraryItem(item2, previewPNGData: preview2)
+
+        let loaded2 = try store.loadShapeLibraryItems(for: notebookID)
+        #expect(loaded2.count == 2)
+
+        // Delete first item
+        try store.deleteShapeLibraryItem(id: item1.id, notebookID: notebookID)
+        let loaded3 = try store.loadShapeLibraryItems(for: notebookID)
+        #expect(loaded3.count == 1)
+        #expect(loaded3.first?.id == item2.id)
+        #expect(try store.loadShapeLibraryPreview(for: item1.id) == nil)
+        #expect(try store.loadShapeLibraryPreview(for: item2.id) == preview2)
+    }
 }
