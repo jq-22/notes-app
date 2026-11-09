@@ -165,6 +165,21 @@ struct PageObjectTests {
         if case .table(_, _, _, _, let color, _) = blueTable.kind {
             #expect(color == .blue)
         }
+
+        // Adjust column divider: expand column 0 by 30pt, shrinking column 1 by 30pt
+        let initialColWidths = table.tableColumnWidths()
+        let adjustedCols = table.adjustingColumnDivider(at: 0, pageDelta: CGSize(width: 30, height: 0))
+        let newColWidths = adjustedCols.tableColumnWidths()
+        #expect(abs(newColWidths[0] - (initialColWidths[0] + 30)) < 0.01)
+        #expect(abs(newColWidths[1] - (initialColWidths[1] - 30)) < 0.01)
+        #expect(abs(newColWidths.reduce(0, +) - table.width) < 0.01)
+
+        // Adjust row height uniformly: expand all rows by delta
+        let initialHeights = table.tableRowHeights()
+        let adjustedRows = table.adjustingTableRowHeight(pageDelta: CGSize(width: 0, height: 40))
+        let newHeights = adjustedRows.tableRowHeights()
+        #expect(adjustedRows.height > table.height)
+        #expect(newHeights.allSatisfy { abs($0 - newHeights[0]) < 0.01 })
     }
 
     @Test("PageLink PageObject creation and properties")

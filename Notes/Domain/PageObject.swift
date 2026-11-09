@@ -521,6 +521,109 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
         return copy
     }
 
+    /// Returns the pixel widths of all columns for a table object, summing exactly to `width`.
+    public func tableColumnWidths() -> [CGFloat] {
+        guard case .table(_, let colCount, let colFracs, _, _, _) = kind, colCount > 0 else {
+            return [width]
+        }
+        if let fractions = colFracs, fractions.count == colCount {
+            let sum = fractions.reduce(0, +)
+            if sum > 0.0001 {
+                return fractions.map { ($0 / sum) * width }
+            }
+        }
+        let equalW = width / CGFloat(colCount)
+        return Array(repeating: equalW, count: colCount)
+    }
+
+    /// Returns the pixel heights of all rows for a table object, summing exactly to `height`.
+    public func tableRowHeights() -> [CGFloat] {
+        guard case .table(let rowCount, _, _, let rowFracs, _, _) = kind, rowCount > 0 else {
+            return [height]
+        }
+        if let fractions = rowFracs, fractions.count == rowCount {
+            let sum = fractions.reduce(0, +)
+            if sum > 0.0001 {
+                return fractions.map { ($0 / sum) * height }
+            }
+        }
+        let equalH = height / CGFloat(rowCount)
+        return Array(repeating: equalH, count: rowCount)
+    }
+
+    /// Adjusts the column divider between column `dividerIndex` and `dividerIndex + 1` by `pageDelta` (in page points).
+    /// Projects page movement into local table space, resizing adjacent columns while preserving total width.
+    public func adjustingColumnDivider(at dividerIndex: Int, pageDelta: CGSize, now: Date = Date()) -> PageObject {
+        guard case .table(let rowCount, let colCount, _, let rowFracs, let strokeColor, let hasHeaderRow) = kind,
+              dividerIndex >= 0, dividerIndex < colCount - 1 else {
+            return self
+        }
+        let cosA = cos(rotation)
+        let sinA = sin(rotation)
+        let localDeltaX = pageDelta.width * cosA + pageDelta.height * sinA
+
+        var colWidths = tableColumnWidths()
+        let minColWidth: CGFloat = 36.0
+
+        let leftW = colWidths[dividerIndex]
+        let rightW = colWidths[dividerIndex + 1]
+
+        var actualDelta = localDeltaX
+        if leftW + actualDelta < minColWidth {
+            actualDelta = minColWidth - leftW
+        } else if rightW - actualDelta < minColWidth {
+            actualDelta = rightW - minColWidth
+        }
+
+        colWidths[dividerIndex] = leftW + actualDelta
+        colWidths[dividerIndex + 1] = rightW - actualDelta
+
+        let total = colWidths.reduce(0, +)
+        let newFractions = colWidths.map { $0 / total }
+
+        var copy = self
+        copy.kind = .table(
+            rowCount: rowCount,
+            columnCount: colCount,
+            columnWidthFractions: newFractions,
+            rowHeightFractions: rowFracs,
+            strokeColor: strokeColor,
+            hasHeaderRow: hasHeaderRow
+        )
+        copy.updatedAt = now
+        return copy
+    }
+
+    /// Adjusts table row heights uniformly by `pageDelta` (in page points).
+    /// Smoothly expands or shrinks all rows equally, updating the total table height.
+    public func adjustingTableRowHeight(pageDelta: CGSize, now: Date = Date()) -> PageObject {
+        guard case .table(let rowCount, let colCount, let colFracs, _, let strokeColor, let hasHeaderRow) = kind,
+              rowCount > 0 else {
+            return self
+        }
+        let cosA = cos(rotation)
+        let sinA = sin(rotation)
+        let localDeltaY = -pageDelta.width * sinA + pageDelta.height * cosA
+
+        let minRowHeight: CGFloat = 24.0
+        let currentHeights = tableRowHeights()
+        let currentAvgHeight = currentHeights.reduce(0, +) / CGFloat(rowCount)
+        let newRowHeight = Swift.max(minRowHeight, currentAvgHeight + (localDeltaY / CGFloat(rowCount)))
+
+        var copy = self
+        copy.height = newRowHeight * CGFloat(rowCount)
+        copy.kind = .table(
+            rowCount: rowCount,
+            columnCount: colCount,
+            columnWidthFractions: colFracs,
+            rowHeightFractions: nil,
+            strokeColor: strokeColor,
+            hasHeaderRow: hasHeaderRow
+        )
+        copy.updatedAt = now
+        return copy
+    }
+
     /// Updates the stroke width for basic shapes.
     public func withStrokeWidth(_ newWidth: CGFloat, now: Date = Date()) -> PageObject {
         var copy = self

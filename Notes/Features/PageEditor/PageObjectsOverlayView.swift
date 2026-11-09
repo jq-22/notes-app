@@ -217,8 +217,67 @@ public struct PageObjectsOverlayView: View {
 
                 cornerHandleDot(for: object, corner: .bottomRight)
                     .offset(x: object.width * 0.5, y: object.height * 0.5)
+
+                // If table: add circular column-width adjustment handles at the top of each divider,
+                // and row-height adjustment handles along the left edge
+                if case .table = object.kind {
+                    let colWidths = object.tableColumnWidths()
+                    let rowHeights = object.tableRowHeights()
+
+                    // Top circular handles for each column boundary
+                    ForEach(0..<(colWidths.count - 1), id: \.self) { divIdx in
+                        let cumulativeX = colWidths[0...divIdx].reduce(0, +)
+                        let localX = -object.width * 0.5 + cumulativeX
+                        columnDividerHandle(for: object, dividerIndex: divIdx)
+                            .offset(x: localX, y: -object.height * 0.5)
+                    }
+
+                    // Left circular handles for row height adjustment
+                    ForEach(0..<(rowHeights.count - 1), id: \.self) { rowIdx in
+                        let cumulativeY = rowHeights[0...rowIdx].reduce(0, +)
+                        let localY = -object.height * 0.5 + cumulativeY
+                        rowDividerHandle(for: object, rowIndex: rowIdx)
+                            .offset(x: -object.width * 0.5, y: localY)
+                    }
+                }
             }
         }
+    }
+
+    private func columnDividerHandle(for object: PageObject, dividerIndex: Int) -> some View {
+        ZStack {
+            Circle()
+                .fill(Color.white)
+                .frame(width: 16, height: 16)
+                .shadow(color: .black.opacity(0.20), radius: 2, x: 0, y: 1)
+            Circle()
+                .strokeBorder(Color.accentColor, lineWidth: 2.0)
+                .frame(width: 16, height: 16)
+            Image(systemName: "arrow.left.and.right")
+                .font(.system(size: 7.5, weight: .bold))
+                .foregroundStyle(Color.accentColor)
+        }
+        .frame(width: Self.cornerHitTargetSize, height: Self.cornerHitTargetSize)
+        .contentShape(Rectangle())
+        .gesture(columnDividerGesture(for: object, dividerIndex: dividerIndex))
+    }
+
+    private func rowDividerHandle(for object: PageObject, rowIndex: Int) -> some View {
+        ZStack {
+            Circle()
+                .fill(Color.white)
+                .frame(width: 16, height: 16)
+                .shadow(color: .black.opacity(0.20), radius: 2, x: 0, y: 1)
+            Circle()
+                .strokeBorder(Color.accentColor, lineWidth: 2.0)
+                .frame(width: 16, height: 16)
+            Image(systemName: "arrow.up.and.down")
+                .font(.system(size: 7.5, weight: .bold))
+                .foregroundStyle(Color.accentColor)
+        }
+        .frame(width: Self.cornerHitTargetSize, height: Self.cornerHitTargetSize)
+        .contentShape(Rectangle())
+        .gesture(rowHeightGesture(for: object))
     }
 
     private func lineEndpointBarHandle(for object: PageObject, endpoint: LineEndpointHandle) -> some View {
@@ -590,6 +649,62 @@ public struct PageObjectsOverlayView: View {
                 }
                 guard let initial = dragStartObject, let before = dragStartAllObjects else { return }
                 let finalObj = initial.rotated(toward: value.location)
+                onUpdateObjectLive(finalObj)
+                let after = before.map { $0.id == finalObj.id ? finalObj : $0 }
+                if before != after {
+                    onCommitObjectsChange(before, after)
+                }
+            }
+    }
+
+    private func columnDividerGesture(for object: PageObject, dividerIndex: Int) -> some Gesture {
+        DragGesture(minimumDistance: 1, coordinateSpace: .named(Self.coordinateSpaceName))
+            .onChanged { value in
+                if dragStartObject == nil {
+                    dragStartObject = object
+                    dragStartAllObjects = objects
+                    isActivelyDraggingHandle = true
+                }
+                guard let initial = dragStartObject else { return }
+                let updated = initial.adjustingColumnDivider(at: dividerIndex, pageDelta: value.translation)
+                onUpdateObjectLive(updated)
+            }
+            .onEnded { value in
+                defer {
+                    dragStartObject = nil
+                    dragStartAllObjects = nil
+                    isActivelyDraggingHandle = false
+                }
+                guard let initial = dragStartObject, let before = dragStartAllObjects else { return }
+                let finalObj = initial.adjustingColumnDivider(at: dividerIndex, pageDelta: value.translation)
+                onUpdateObjectLive(finalObj)
+                let after = before.map { $0.id == finalObj.id ? finalObj : $0 }
+                if before != after {
+                    onCommitObjectsChange(before, after)
+                }
+            }
+    }
+
+    private func rowHeightGesture(for object: PageObject) -> some Gesture {
+        DragGesture(minimumDistance: 1, coordinateSpace: .named(Self.coordinateSpaceName))
+            .onChanged { value in
+                if dragStartObject == nil {
+                    dragStartObject = object
+                    dragStartAllObjects = objects
+                    isActivelyDraggingHandle = true
+                }
+                guard let initial = dragStartObject else { return }
+                let updated = initial.adjustingTableRowHeight(pageDelta: value.translation)
+                onUpdateObjectLive(updated)
+            }
+            .onEnded { value in
+                defer {
+                    dragStartObject = nil
+                    dragStartAllObjects = nil
+                    isActivelyDraggingHandle = false
+                }
+                guard let initial = dragStartObject, let before = dragStartAllObjects else { return }
+                let finalObj = initial.adjustingTableRowHeight(pageDelta: value.translation)
                 onUpdateObjectLive(finalObj)
                 let after = before.map { $0.id == finalObj.id ? finalObj : $0 }
                 if before != after {
