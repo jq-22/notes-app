@@ -382,4 +382,55 @@ struct LibraryViewModelTests {
         vm.deleteShapeLibraryItem(id: savedItem.id, notebookID: nb.id)
         #expect(vm.loadShapeLibraryItems(for: nb.id).isEmpty)
     }
+
+    @Test("Inserting tables and page links, and navigating across pages")
+    func tableAndPageLinkOperations() throws {
+        let store = InMemoryPageStore()
+        let vm = LibraryViewModel(store: store)
+
+        let nb1 = vm.createNotebook(title: "Maths")
+        let sec1ID = try #require(nb1.sections.first?.id)
+        let page1ID = try #require(nb1.sections.first?.pages.first?.id)
+
+        // 1. Insert a 3x4 Table
+        let tableObj = try #require(vm.insertTable(rows: 4, columns: 3, color: .blue, hasHeaderRow: true, on: page1ID, in: sec1ID, notebookID: nb1.id))
+        #expect(vm.selectedPage?.objects.count == 1)
+        #expect(vm.selectedObjectID == tableObj.id)
+        if case .table(let rows, let cols, _, _, let color, let header) = tableObj.kind {
+            #expect(rows == 4)
+            #expect(cols == 3)
+            #expect(color == .blue)
+            #expect(header == true)
+        } else {
+            Issue.record("Expected table kind")
+        }
+
+        // 2. Create another page in a second notebook to link to
+        let nb2 = vm.createNotebook(title: "Physics")
+        let sec2ID = try #require(nb2.sections.first?.id)
+        let page2ID = try #require(nb2.sections.first?.pages.first?.id)
+
+        // Switch back to Page 1 and insert a Page Link pointing to Page 2
+        vm.navigateToPage(pageID: page1ID, sectionID: sec1ID, notebookID: nb1.id)
+        #expect(vm.selectedPageID == page1ID)
+
+        let linkObj = try #require(vm.insertPageLink(
+            targetPageID: page2ID,
+            targetSectionID: sec2ID,
+            targetNotebookID: nb2.id,
+            title: "Physics Page 1",
+            on: page1ID,
+            in: sec1ID,
+            notebookID: nb1.id
+        ))
+        #expect(vm.selectedPage?.objects.count == 2)
+        #expect(vm.selectedObjectID == linkObj.id)
+
+        // 3. Navigate to Page 2 via link target
+        vm.navigateToPage(pageID: page2ID, sectionID: sec2ID, notebookID: nb2.id)
+        #expect(vm.selectedNotebookID == nb2.id)
+        #expect(vm.selectedSectionID == sec2ID)
+        #expect(vm.selectedPageID == page2ID)
+        #expect(vm.selectedObjectID == nil)
+    }
 }

@@ -146,6 +146,75 @@ public enum PagePDFExporter {
                 ) {
                     img.draw(in: localRect)
                 }
+
+            case .table(let rowCount, let colCount, let colFracs, let rowFracs, let strokeColor, let hasHeaderRow):
+                let w = object.width
+                let h = object.height
+                let colWidths: [CGFloat] = {
+                    if let fractions = colFracs, fractions.count == colCount {
+                        let sum = fractions.reduce(0, +)
+                        return fractions.map { ($0 / sum) * w }
+                    }
+                    let equalW = w / CGFloat(Swift.max(1, colCount))
+                    return Array(repeating: equalW, count: colCount)
+                }()
+                let rowHeights: [CGFloat] = {
+                    if let fractions = rowFracs, fractions.count == rowCount {
+                        let sum = fractions.reduce(0, +)
+                        return fractions.map { ($0 / sum) * h }
+                    }
+                    let equalH = h / CGFloat(Swift.max(1, rowCount))
+                    return Array(repeating: equalH, count: rowCount)
+                }()
+
+                let uiColor = strokeColor.uiColor(opacity: 1.0)
+                cgContext.setStrokeColor(uiColor.cgColor)
+
+                if hasHeaderRow, let firstH = rowHeights.first {
+                    cgContext.setFillColor(uiColor.withAlphaComponent(0.10).cgColor)
+                    cgContext.fill(CGRect(x: 0, y: 0, width: w, height: firstH))
+                }
+
+                // Outer border
+                cgContext.setLineWidth(1.8)
+                cgContext.stroke(CGRect(x: 0, y: 0, width: w, height: h))
+
+                // Column dividers
+                cgContext.setLineWidth(1.0)
+                var currentX: CGFloat = 0
+                for colIdx in 0..<(colWidths.count - 1) {
+                    currentX += colWidths[colIdx]
+                    cgContext.move(to: CGPoint(x: currentX, y: 0))
+                    cgContext.addLine(to: CGPoint(x: currentX, y: h))
+                }
+                cgContext.strokePath()
+
+                // Row dividers
+                var currentY: CGFloat = 0
+                for rowIdx in 0..<(rowHeights.count - 1) {
+                    currentY += rowHeights[rowIdx]
+                    cgContext.move(to: CGPoint(x: 0, y: currentY))
+                    cgContext.addLine(to: CGPoint(x: w, y: currentY))
+                }
+                cgContext.strokePath()
+
+            case .pageLink(_, _, _, let fallbackTitle):
+                let cardRect = CGRect(x: 0, y: 0, width: object.width, height: object.height)
+                let cardPath = CGPath(roundedRect: cardRect, cornerWidth: 8, cornerHeight: 8, transform: nil)
+                cgContext.setFillColor(UIColor.secondarySystemBackground.cgColor)
+                cgContext.addPath(cardPath)
+                cgContext.fillPath()
+                cgContext.setStrokeColor(UIColor.systemBlue.withAlphaComponent(0.4).cgColor)
+                cgContext.setLineWidth(1.0)
+                cgContext.addPath(cardPath)
+                cgContext.strokePath()
+
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 12, weight: .semibold),
+                    .foregroundColor: UIColor.label
+                ]
+                let titleRect = CGRect(x: 10, y: (object.height - 16) * 0.5, width: object.width - 20, height: 16)
+                (fallbackTitle as NSString).draw(in: titleRect, withAttributes: attrs)
             }
 
             cgContext.restoreGState()

@@ -62,6 +62,22 @@ public enum PageObjectKind: Codable, Equatable, Hashable, Sendable {
     case image(assetID: UUID)
     /// A group of PencilKit strokes (from Lasso Copy/Paste or the Notebook Shape Library) that can be moved, resized, rotated, and recoloured.
     case strokeGroup(drawingData: Data, sourceBoundsWidth: CGFloat, sourceBoundsHeight: CGFloat, tintColorOverride: InkColorPreset?)
+    /// A structured grid table for handwritten notes (e.g. Name / Meaning / Example) where ink flows naturally across cells.
+    case table(
+        rowCount: Int,
+        columnCount: Int,
+        columnWidthFractions: [CGFloat]?,
+        rowHeightFractions: [CGFloat]?,
+        strokeColor: InkColorPreset,
+        hasHeaderRow: Bool
+    )
+    /// A link to another page in the notebook hierarchy (by permanent UUID).
+    case pageLink(
+        targetPageID: UUID,
+        targetSectionID: UUID,
+        targetNotebookID: UUID,
+        fallbackTitle: String
+    )
 }
 
 /// A placed object on an A4 page with unified move, 4-corner resize, and top-handle rotate geometry.
@@ -175,6 +191,67 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
             rotation: 0,
             zIndex: zIndex,
             kind: .image(assetID: assetID)
+        )
+    }
+
+    /// Creates a default-sized structured grid table centered on an A4 page.
+    public static func defaultTable(
+        rows: Int = 4,
+        columns: Int = 3,
+        color: InkColorPreset = .black,
+        hasHeaderRow: Bool = true,
+        zIndex: Int = 0,
+        pageSize: CGSize = PageGeometry.a4Size
+    ) -> PageObject {
+        let safeRows = Swift.max(1, rows)
+        let safeCols = Swift.max(1, columns)
+        let tableWidth: CGFloat = 460
+        let rowHeight: CGFloat = 40.0
+        let tableHeight: CGFloat = CGFloat(safeRows) * rowHeight + (hasHeaderRow ? 8.0 : 0.0)
+        let origin = CGPoint(
+            x: (pageSize.width - tableWidth) * 0.5,
+            y: (pageSize.height - tableHeight) * 0.38
+        )
+        return PageObject(
+            frame: CGRect(origin: origin, size: CGSize(width: tableWidth, height: tableHeight)),
+            rotation: 0,
+            zIndex: zIndex,
+            kind: .table(
+                rowCount: safeRows,
+                columnCount: safeCols,
+                columnWidthFractions: nil,
+                rowHeightFractions: nil,
+                strokeColor: color,
+                hasHeaderRow: hasHeaderRow
+            )
+        )
+    }
+
+    /// Creates a default-sized page-link badge pill.
+    public static func defaultPageLink(
+        targetPageID: UUID,
+        targetSectionID: UUID,
+        targetNotebookID: UUID,
+        title: String,
+        zIndex: Int = 0,
+        pageSize: CGSize = PageGeometry.a4Size
+    ) -> PageObject {
+        let badgeWidth: CGFloat = 220
+        let badgeHeight: CGFloat = 46
+        let origin = CGPoint(
+            x: (pageSize.width - badgeWidth) * 0.5,
+            y: (pageSize.height - badgeHeight) * 0.38
+        )
+        return PageObject(
+            frame: CGRect(origin: origin, size: CGSize(width: badgeWidth, height: badgeHeight)),
+            rotation: 0,
+            zIndex: zIndex,
+            kind: .pageLink(
+                targetPageID: targetPageID,
+                targetSectionID: targetSectionID,
+                targetNotebookID: targetNotebookID,
+                fallbackTitle: title
+            )
         )
     }
 
@@ -316,7 +393,7 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
         return copy
     }
 
-    /// Updates the stroke/tint colour for basic shapes or stroke-group objects.
+    /// Updates the stroke/tint colour for basic shapes, tables, or stroke-group objects.
     public func recolored(to newColor: InkColorPreset, now: Date = Date()) -> PageObject {
         var copy = self
         switch kind {
@@ -326,9 +403,121 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
         case .strokeGroup(let data, let w, let h, _):
             copy.kind = .strokeGroup(drawingData: data, sourceBoundsWidth: w, sourceBoundsHeight: h, tintColorOverride: newColor)
             copy.updatedAt = now
-        case .image:
+        case .table(let rows, let cols, let colFracs, let rowFracs, _, let header):
+            copy.kind = .table(
+                rowCount: rows,
+                columnCount: cols,
+                columnWidthFractions: colFracs,
+                rowHeightFractions: rowFracs,
+                strokeColor: newColor,
+                hasHeaderRow: header
+            )
+            copy.updatedAt = now
+        case .image, .pageLink:
             break
         }
+        return copy
+    }
+
+    /// Appends a new row to the table and expands its height accordingly.
+    public func withAddedTableRow(now: Date = Date()) -> PageObject {
+        guard case .table(let rows, let cols, let colFracs, _, let strokeColor, let header) = kind else {
+            return self
+        }
+        let newRows = rows + 1
+        let rowHeight = height / CGFloat(rows)
+        var copy = self
+        copy.height += rowHeight
+        copy.kind = .table(
+            rowCount: newRows,
+            columnCount: cols,
+            columnWidthFractions: colFracs,
+            rowHeightFractions: nil,
+            strokeColor: strokeColor,
+            hasHeaderRow: header
+        )
+        copy.updatedAt = now
+        return copy
+    }
+
+    /// Removes the bottom row from the table (minimum 1 row).
+    public func withRemovedTableRow(now: Date = Date()) -> PageObject {
+        guard case .table(let rows, let cols, let colFracs, _, let strokeColor, let header) = kind, rows > 1 else {
+            return self
+        }
+        let newRows = rows - 1
+        let rowHeight = height / CGFloat(rows)
+        var copy = self
+        copy.height = Swift.max(Self.minimumDimension, height - rowHeight)
+        copy.kind = .table(
+            rowCount: newRows,
+            columnCount: cols,
+            columnWidthFractions: colFracs,
+            rowHeightFractions: nil,
+            strokeColor: strokeColor,
+            hasHeaderRow: header
+        )
+        copy.updatedAt = now
+        return copy
+    }
+
+    /// Appends a new column to the table and expands its width accordingly.
+    public func withAddedTableColumn(now: Date = Date()) -> PageObject {
+        guard case .table(let rows, let cols, _, let rowFracs, let strokeColor, let header) = kind else {
+            return self
+        }
+        let newCols = cols + 1
+        let colWidth = width / CGFloat(cols)
+        var copy = self
+        copy.width += colWidth
+        copy.kind = .table(
+            rowCount: rows,
+            columnCount: newCols,
+            columnWidthFractions: nil,
+            rowHeightFractions: rowFracs,
+            strokeColor: strokeColor,
+            hasHeaderRow: header
+        )
+        copy.updatedAt = now
+        return copy
+    }
+
+    /// Removes the rightmost column from the table (minimum 1 column).
+    public func withRemovedTableColumn(now: Date = Date()) -> PageObject {
+        guard case .table(let rows, let cols, _, let rowFracs, let strokeColor, let header) = kind, cols > 1 else {
+            return self
+        }
+        let newCols = cols - 1
+        let colWidth = width / CGFloat(cols)
+        var copy = self
+        copy.width = Swift.max(Self.minimumDimension, width - colWidth)
+        copy.kind = .table(
+            rowCount: rows,
+            columnCount: newCols,
+            columnWidthFractions: nil,
+            rowHeightFractions: rowFracs,
+            strokeColor: strokeColor,
+            hasHeaderRow: header
+        )
+        copy.updatedAt = now
+        return copy
+    }
+
+    /// Toggles the header row styling for table objects.
+    public func withToggledTableHeader(now: Date = Date()) -> PageObject {
+        guard case .table(let rows, let cols, let colFracs, let rowFracs, let strokeColor, let header) = kind else {
+            return self
+        }
+        var copy = self
+        copy.kind = .table(
+            rowCount: rows,
+            columnCount: cols,
+            columnWidthFractions: colFracs,
+            rowHeightFractions: rowFracs,
+            strokeColor: strokeColor,
+            hasHeaderRow: !header
+        )
+        copy.updatedAt = now
         return copy
     }
 

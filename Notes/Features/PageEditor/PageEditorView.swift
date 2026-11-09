@@ -26,6 +26,7 @@ public struct PageEditorView: View {
     @State private var redoTriggerCount: Int = 0
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var isPhotoPickerPresented: Bool = false
+    @State private var isPageLinkPickerPresented: Bool = false
     @State private var isShapeLibraryPresented: Bool = false
     @State private var isSaveShapePromptPresented: Bool = false
     @State private var shapeLabelDraft: String = "Shape"
@@ -185,11 +186,34 @@ public struct PageEditorView: View {
             },
             onSwipeToPreviousPage: {
                 viewModel.goToPreviousPage()
+            },
+            onNavigateToPage: { targetPageID, targetSecID, targetNbID in
+                viewModel.navigateToPage(pageID: targetPageID, sectionID: targetSecID, notebookID: targetNbID)
             }
         )
         .ignoresSafeArea(edges: .bottom)
         .navigationTitle(pagePositionLabel)
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $isPageLinkPickerPresented) {
+            PageLinkPickerSheet(
+                notebooks: viewModel.notebooks,
+                currentPageID: page.id,
+                onSelectPage: { selectedTargetPage, selectedTargetSection, selectedTargetNotebook in
+                    viewModel.insertPageLink(
+                        targetPageID: selectedTargetPage.id,
+                        targetSectionID: selectedTargetSection.id,
+                        targetNotebookID: selectedTargetNotebook.id,
+                        title: selectedTargetPage.title,
+                        on: page.id,
+                        in: section.id,
+                        notebookID: notebook.id
+                    )
+                },
+                onDismiss: {
+                    isPageLinkPickerPresented = false
+                }
+            )
+        }
         .photosPicker(
             isPresented: $isPhotoPickerPresented,
             selection: $selectedPhotoItem,
@@ -291,12 +315,34 @@ public struct PageEditorView: View {
                     .help("Paste copied strokes or objects onto this page")
                 }
 
-                // Insert Menu (Photos & Basic Shapes: Rectangle, Circle, Arrow, Line)
+                // Insert Menu (Photos, Tables, Basic Shapes, Page Links)
                 Menu {
                     Button {
                         isPhotoPickerPresented = true
                     } label: {
                         Label("Insert Photo…", systemImage: "photo.on.rectangle.angled")
+                    }
+
+                    Divider()
+
+                    Section("Tables") {
+                        Button {
+                            viewModel.insertTable(rows: 4, columns: 3, hasHeaderRow: true, on: page.id, in: section.id, notebookID: notebook.id)
+                        } label: {
+                            Label("Table (3 × 4 - Notes)", systemImage: "tablecells")
+                        }
+
+                        Button {
+                            viewModel.insertTable(rows: 5, columns: 2, hasHeaderRow: true, on: page.id, in: section.id, notebookID: notebook.id)
+                        } label: {
+                            Label("Table (2 × 5 - Terms)", systemImage: "tablecells")
+                        }
+
+                        Button {
+                            viewModel.insertTable(rows: 4, columns: 4, hasHeaderRow: true, on: page.id, in: section.id, notebookID: notebook.id)
+                        } label: {
+                            Label("Table (4 × 4 - Grid)", systemImage: "tablecells")
+                        }
                     }
 
                     Divider()
@@ -315,10 +361,20 @@ public struct PageEditorView: View {
                             }
                         }
                     }
+
+                    Divider()
+
+                    Section("Page Links") {
+                        Button {
+                            isPageLinkPickerPresented = true
+                        } label: {
+                            Label("Link to Page…", systemImage: "link.badge.plus")
+                        }
+                    }
                 } label: {
                     Label("Insert", systemImage: "plus.square.on.square")
                 }
-                .help("Insert an image or basic shape (Rectangle, Circle, Arrow, Line)")
+                .help("Insert photos, tables, basic shapes, or links to other pages")
 
                 // Notebook Shape Library Popover Button
                 Button {

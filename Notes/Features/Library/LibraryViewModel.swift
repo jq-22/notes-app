@@ -629,6 +629,56 @@ public final class LibraryViewModel {
         return addPageObject(object, on: pageID, in: sectionID, notebookID: notebookID)
     }
 
+    /// Inserts a default-sized structured grid Table onto the target page and selects it immediately.
+    @discardableResult
+    public func insertTable(
+        rows: Int = 4,
+        columns: Int = 3,
+        color: InkColorPreset? = nil,
+        hasHeaderRow: Bool = true,
+        on pageID: UUID? = nil,
+        in sectionID: UUID? = nil,
+        notebookID: UUID? = nil
+    ) -> PageObject? {
+        let resolvedColor = color ?? toolState.penColor
+        let object = PageObject.defaultTable(
+            rows: rows,
+            columns: columns,
+            color: resolvedColor,
+            hasHeaderRow: hasHeaderRow
+        )
+        return addPageObject(object, on: pageID, in: sectionID, notebookID: notebookID)
+    }
+
+    /// Inserts a Page-to-Page Link badge onto the target page and selects it immediately.
+    @discardableResult
+    public func insertPageLink(
+        targetPageID: UUID,
+        targetSectionID: UUID,
+        targetNotebookID: UUID,
+        title: String,
+        on pageID: UUID? = nil,
+        in sectionID: UUID? = nil,
+        notebookID: UUID? = nil
+    ) -> PageObject? {
+        let object = PageObject.defaultPageLink(
+            targetPageID: targetPageID,
+            targetSectionID: targetSectionID,
+            targetNotebookID: targetNotebookID,
+            title: title
+        )
+        return addPageObject(object, on: pageID, in: sectionID, notebookID: notebookID)
+    }
+
+    /// Navigates directly to a target page in any notebook and section.
+    public func navigateToPage(pageID: UUID, sectionID: UUID, notebookID: UUID) {
+        selectedNotebookID = notebookID
+        selectedSectionID = sectionID
+        selectedPageID = pageID
+        selectedObjectID = nil
+        isLassoModeActive = false
+    }
+
     /// Adds a `PageObject` to the specified page (defaulting to the currently selected page) and selects it.
     @discardableResult
     public func addPageObject(

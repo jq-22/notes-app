@@ -114,4 +114,81 @@ struct PageObjectTests {
         #expect(decodedPage.paperTypeOverride == .squared)
         #expect(decodedPage.objects.isEmpty)
     }
+
+    @Test("Table PageObject creation, row/column addition, removal, header toggle, and recolouring")
+    func tableObjectOperationsAndGridMath() {
+        let table = PageObject.defaultTable(rows: 4, columns: 3, color: .black, hasHeaderRow: true)
+        #expect(table.width == 460)
+        if case .table(let rows, let cols, _, _, let color, let header) = table.kind {
+            #expect(rows == 4)
+            #expect(cols == 3)
+            #expect(color == .black)
+            #expect(header == true)
+        } else {
+            Issue.record("Expected table kind")
+        }
+
+        // Add row
+        let withRow = table.withAddedTableRow()
+        if case .table(let rows, _, _, _, _, _) = withRow.kind {
+            #expect(rows == 5)
+            #expect(withRow.height > table.height)
+        }
+
+        // Remove row
+        let withoutRow = withRow.withRemovedTableRow()
+        if case .table(let rows, _, _, _, _, _) = withoutRow.kind {
+            #expect(rows == 4)
+        }
+
+        // Add column
+        let withCol = table.withAddedTableColumn()
+        if case .table(_, let cols, _, _, _, _) = withCol.kind {
+            #expect(cols == 4)
+            #expect(withCol.width > table.width)
+        }
+
+        // Remove column
+        let withoutCol = withCol.withRemovedTableColumn()
+        if case .table(_, let cols, _, _, _, _) = withoutCol.kind {
+            #expect(cols == 3)
+        }
+
+        // Toggle header
+        let toggledHeader = table.withToggledTableHeader()
+        if case .table(_, _, _, _, _, let header) = toggledHeader.kind {
+            #expect(header == false)
+        }
+
+        // Recolour
+        let blueTable = table.recolored(to: .blue)
+        if case .table(_, _, _, _, let color, _) = blueTable.kind {
+            #expect(color == .blue)
+        }
+    }
+
+    @Test("PageLink PageObject creation and properties")
+    func pageLinkBadgeCreationAndProperties() {
+        let targetPageID = UUID()
+        let targetSecID = UUID()
+        let targetNbID = UUID()
+
+        let link = PageObject.defaultPageLink(
+            targetPageID: targetPageID,
+            targetSectionID: targetSecID,
+            targetNotebookID: targetNbID,
+            title: "Linear Algebra Summary"
+        )
+
+        #expect(link.width == 220)
+        #expect(link.height == 46)
+        if case .pageLink(let pgID, let secID, let nbID, let title) = link.kind {
+            #expect(pgID == targetPageID)
+            #expect(secID == targetSecID)
+            #expect(nbID == targetNbID)
+            #expect(title == "Linear Algebra Summary")
+        } else {
+            Issue.record("Expected pageLink kind")
+        }
+    }
 }

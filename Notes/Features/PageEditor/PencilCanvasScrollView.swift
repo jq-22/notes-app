@@ -47,6 +47,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
     public let onPencilDoubleTap: () -> Void
     public var onSwipeToNextPage: (() -> Void)?
     public var onSwipeToPreviousPage: (() -> Void)?
+    public var onNavigateToPage: ((UUID, UUID, UUID) -> Void)?
 
     public static let minimumZoomScale: CGFloat = 0.85
     public static let maximumZoomScale: CGFloat = 5.0
@@ -85,7 +86,8 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         onUndoStateChanged: @escaping (Bool, Bool) -> Void = { _, _ in },
         onPencilDoubleTap: @escaping () -> Void = {},
         onSwipeToNextPage: (() -> Void)? = nil,
-        onSwipeToPreviousPage: (() -> Void)? = nil
+        onSwipeToPreviousPage: (() -> Void)? = nil,
+        onNavigateToPage: ((UUID, UUID, UUID) -> Void)? = nil
     ) {
         self.pageID = pageID
         self.paperType = paperType
@@ -113,6 +115,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         self.onPencilDoubleTap = onPencilDoubleTap
         self.onSwipeToNextPage = onSwipeToNextPage
         self.onSwipeToPreviousPage = onSwipeToPreviousPage
+        self.onNavigateToPage = onNavigateToPage
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -315,6 +318,9 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                     self.isProgrammaticObjectsUpdate = true
                     self.parent.onDeleteObject(objectID)
                     self.isProgrammaticObjectsUpdate = false
+                },
+                onNavigateToPage: { [weak self] pageID, secID, nbID in
+                    self?.parent.onNavigateToPage?(pageID, secID, nbID)
                 }
             )
         }

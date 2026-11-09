@@ -26,6 +26,7 @@ public struct PageObjectsOverlayView: View {
     public let onCopyObject: (UUID) -> Void
     public let onDuplicateObject: (UUID) -> Void
     public let onDeleteObject: (UUID) -> Void
+    public let onNavigateToPage: ((UUID, UUID, UUID) -> Void)?
 
     @State private var dragStartObject: PageObject?
     @State private var dragStartAllObjects: [PageObject]?
@@ -46,7 +47,8 @@ public struct PageObjectsOverlayView: View {
         onCommitObjectsChange: @escaping ([PageObject], [PageObject]) -> Void = { _, _ in },
         onCopyObject: @escaping (UUID) -> Void = { _ in },
         onDuplicateObject: @escaping (UUID) -> Void = { _ in },
-        onDeleteObject: @escaping (UUID) -> Void = { _ in }
+        onDeleteObject: @escaping (UUID) -> Void = { _ in },
+        onNavigateToPage: ((UUID, UUID, UUID) -> Void)? = nil
     ) {
         self.objects = objects
         self.selectedObjectID = selectedObjectID
@@ -58,6 +60,7 @@ public struct PageObjectsOverlayView: View {
         self.onCopyObject = onCopyObject
         self.onDuplicateObject = onDuplicateObject
         self.onDeleteObject = onDeleteObject
+        self.onNavigateToPage = onNavigateToPage
     }
 
     private var sortedObjects: [PageObject] {
@@ -97,6 +100,10 @@ public struct PageObjectsOverlayView: View {
                 .frame(width: object.width, height: object.height)
                 .contentShape(Rectangle())
                 .onTapGesture {
+                    if case .pageLink(let targetPageID, let targetSecID, let targetNbID, _) = object.kind, !isSelected {
+                        onNavigateToPage?(targetPageID, targetSecID, targetNbID)
+                        return
+                    }
                     guard isInteractive else { return }
                     onSelectObject(object.id)
                 }
@@ -255,6 +262,117 @@ public struct PageObjectsOverlayView: View {
             : Swift.max(36, object.frame.minY - 46)
 
         HStack(spacing: 8) {
+            // Table-specific row/col and header controls
+            if case .table(let rows, let cols, _, _, _, let header) = object.kind {
+                Button {
+                    let before = objects
+                    let updated = object.withToggledTableHeader()
+                    onUpdateObjectLive(updated)
+                    let after = objects.map { $0.id == updated.id ? updated : $0 }
+                    onCommitObjectsChange(before, after)
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: header ? "tablecells.badge.ellipsis" : "tablecells")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(header ? "Header: On" : "Header: Off")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .background(header ? Color.accentColor.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .help("Toggle Header Row")
+
+                HStack(spacing: 2) {
+                    Button {
+                        let before = objects
+                        let updated = object.withAddedTableRow()
+                        onUpdateObjectLive(updated)
+                        let after = objects.map { $0.id == updated.id ? updated : $0 }
+                        onCommitObjectsChange(before, after)
+                    } label: {
+                        Text("+ Row")
+                            .font(.system(size: 11, weight: .semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Add Row")
+
+                    if rows > 1 {
+                        Button {
+                            let before = objects
+                            let updated = object.withRemovedTableRow()
+                            onUpdateObjectLive(updated)
+                            let after = objects.map { $0.id == updated.id ? updated : $0 }
+                            onCommitObjectsChange(before, after)
+                        } label: {
+                            Text("- Row")
+                                .font(.system(size: 11, weight: .semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Remove Row")
+                    }
+                }
+                .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+
+                HStack(spacing: 2) {
+                    Button {
+                        let before = objects
+                        let updated = object.withAddedTableColumn()
+                        onUpdateObjectLive(updated)
+                        let after = objects.map { $0.id == updated.id ? updated : $0 }
+                        onCommitObjectsChange(before, after)
+                    } label: {
+                        Text("+ Col")
+                            .font(.system(size: 11, weight: .semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Add Column")
+
+                    if cols > 1 {
+                        Button {
+                            let before = objects
+                            let updated = object.withRemovedTableColumn()
+                            onUpdateObjectLive(updated)
+                            let after = objects.map { $0.id == updated.id ? updated : $0 }
+                            onCommitObjectsChange(before, after)
+                        } label: {
+                            Text("- Col")
+                                .font(.system(size: 11, weight: .semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Remove Column")
+                    }
+                }
+                .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+
+                Divider()
+                    .frame(height: 18)
+            }
+
+            // Page link jump button
+            if case .pageLink(let targetPageID, let targetSecID, let targetNbID, _) = object.kind {
+                Button {
+                    onNavigateToPage?(targetPageID, targetSecID, targetNbID)
+                } label: {
+                    Label("Go to Page", systemImage: "arrow.right.circle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+
+                Divider()
+                    .frame(height: 18)
+            }
+
             if canRecolor(object) {
                 ForEach(InkColorPreset.allCases) { preset in
                     Button {
@@ -343,9 +461,9 @@ public struct PageObjectsOverlayView: View {
 
     private func canRecolor(_ object: PageObject) -> Bool {
         switch object.kind {
-        case .basicShape, .strokeGroup:
+        case .basicShape, .strokeGroup, .table:
             return true
-        case .image:
+        case .image, .pageLink:
             return false
         }
     }
@@ -356,7 +474,9 @@ public struct PageObjectsOverlayView: View {
             return color == preset
         case .strokeGroup(_, _, _, let tint):
             return tint == preset
-        case .image:
+        case .table(_, _, _, _, let color, _):
+            return color == preset
+        case .image, .pageLink:
             return false
         }
     }
@@ -573,6 +693,24 @@ public struct PageObjectContentView: View {
             } else {
                 EmptyView()
             }
+
+        case .table(let rowCount, let colCount, let colFracs, let rowFracs, let strokeColor, let hasHeaderRow):
+            TableView(
+                rowCount: rowCount,
+                columnCount: colCount,
+                columnWidthFractions: colFracs,
+                rowHeightFractions: rowFracs,
+                strokeColor: strokeColor,
+                hasHeaderRow: hasHeaderRow
+            )
+
+        case .pageLink(let targetPageID, let targetSecID, let targetNbID, let fallbackTitle):
+            PageLinkBadgeView(
+                targetPageID: targetPageID,
+                targetSectionID: targetSecID,
+                targetNotebookID: targetNbID,
+                fallbackTitle: fallbackTitle
+            )
         }
     }
 
@@ -603,5 +741,158 @@ public struct PageObjectContentView: View {
             rendered = drawing.image(from: bounds, scale: 2.0)
         }
         return rendered
+    }
+}
+
+// MARK: - Table View Component (Grid Sits Under Ink Layer)
+
+public struct TableView: View {
+    public let rowCount: Int
+    public let columnCount: Int
+    public let columnWidthFractions: [CGFloat]?
+    public let rowHeightFractions: [CGFloat]?
+    public let strokeColor: InkColorPreset
+    public let hasHeaderRow: Bool
+
+    public init(
+        rowCount: Int,
+        columnCount: Int,
+        columnWidthFractions: [CGFloat]?,
+        rowHeightFractions: [CGFloat]?,
+        strokeColor: InkColorPreset,
+        hasHeaderRow: Bool
+    ) {
+        self.rowCount = rowCount
+        self.columnCount = columnCount
+        self.columnWidthFractions = columnWidthFractions
+        self.rowHeightFractions = rowHeightFractions
+        self.strokeColor = strokeColor
+        self.hasHeaderRow = hasHeaderRow
+    }
+
+    public var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let colWidths: [CGFloat] = {
+                if let fractions = columnWidthFractions, fractions.count == columnCount {
+                    let sum = fractions.reduce(0, +)
+                    return fractions.map { ($0 / sum) * w }
+                }
+                let equalW = w / CGFloat(Swift.max(1, columnCount))
+                return Array(repeating: equalW, count: columnCount)
+            }()
+            let rowHeights: [CGFloat] = {
+                if let fractions = rowHeightFractions, fractions.count == rowCount {
+                    let sum = fractions.reduce(0, +)
+                    return fractions.map { ($0 / sum) * h }
+                }
+                let equalH = h / CGFloat(Swift.max(1, rowCount))
+                return Array(repeating: equalH, count: rowCount)
+            }()
+
+            ZStack(alignment: .topLeading) {
+                // Header row background highlight if enabled
+                if hasHeaderRow, let firstH = rowHeights.first {
+                    Rectangle()
+                        .fill(strokeColor.swiftUIColor.opacity(0.10))
+                        .frame(width: w, height: firstH)
+                }
+
+                // Grid paths
+                Canvas { context, size in
+                    let color = strokeColor.swiftUIColor
+                    let outerStyle = StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round)
+                    let innerStyle = StrokeStyle(lineWidth: 1.0, lineCap: .round, lineJoin: .round)
+
+                    // Outer border
+                    context.stroke(
+                        Path(CGRect(x: 0, y: 0, width: size.width, height: size.height)),
+                        with: .color(color),
+                        style: outerStyle
+                    )
+
+                    // Vertical column lines
+                    var currentX: CGFloat = 0
+                    for colIdx in 0..<(colWidths.count - 1) {
+                        currentX += colWidths[colIdx]
+                        var vLine = Path()
+                        vLine.move(to: CGPoint(x: currentX, y: 0))
+                        vLine.addLine(to: CGPoint(x: currentX, y: size.height))
+                        context.stroke(vLine, with: .color(color.opacity(0.85)), style: innerStyle)
+                    }
+
+                    // Horizontal row lines
+                    var currentY: CGFloat = 0
+                    for rowIdx in 0..<(rowHeights.count - 1) {
+                        currentY += rowHeights[rowIdx]
+                        var hLine = Path()
+                        hLine.move(to: CGPoint(x: 0, y: currentY))
+                        hLine.addLine(to: CGPoint(x: size.width, y: currentY))
+                        let isHeaderDivider = (rowIdx == 0 && hasHeaderRow)
+                        let rowStyle = isHeaderDivider ? outerStyle : innerStyle
+                        context.stroke(hLine, with: .color(isHeaderDivider ? color : color.opacity(0.85)), style: rowStyle)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Page Link Badge Component
+
+public struct PageLinkBadgeView: View {
+    public let targetPageID: UUID
+    public let targetSectionID: UUID
+    public let targetNotebookID: UUID
+    public let fallbackTitle: String
+
+    public init(
+        targetPageID: UUID,
+        targetSectionID: UUID,
+        targetNotebookID: UUID,
+        fallbackTitle: String
+    ) {
+        self.targetPageID = targetPageID
+        self.targetSectionID = targetSectionID
+        self.targetNotebookID = targetNotebookID
+        self.fallbackTitle = fallbackTitle
+    }
+
+    public var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "doc.text.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(fallbackTitle)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Text("Linked Page")
+                    .font(.system(size: 9.5, weight: .regular))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 4)
+
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(uiColor: .secondarySystemBackground))
+                .shadow(color: .black.opacity(0.06), radius: 2, x: 0, y: 1)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.accentColor.opacity(0.3), lineWidth: 1.2)
+        )
     }
 }
