@@ -48,8 +48,10 @@ Notes/
     ARCHITECTURE.md                   Architecture map and verified build/test commands
     Notes-v1a-Documentation.pdf       3-page visual architecture & engineering reference PDF for Milestone v1a
     Notes-v1b-Documentation.pdf       3-page visual architecture & engineering reference PDF for Milestone v1b
+    Notes-v1c-Documentation.pdf       3-page visual architecture & engineering reference PDF for Milestone v1c
     generate_v1a_pdf.swift            Reproducible CoreGraphics/AppKit generator for Notes-v1a-Documentation.pdf
     generate_v1b_pdf.swift            Reproducible CoreGraphics/AppKit generator for Notes-v1b-Documentation.pdf
+    generate_v1c_pdf.swift            Reproducible CoreGraphics/AppKit generator for Notes-v1c-Documentation.pdf
 NotesTests/
   Domain/
     NotebookHierarchyTests.swift      Unit tests for Notebook, NoteSection, Page, PaperType

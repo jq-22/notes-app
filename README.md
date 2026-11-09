@@ -1,12 +1,43 @@
-# Notes — Native iPadOS Handwriting & Structured Notes (`v1b`)
+# Notes — Native iPadOS Handwriting & Structured Notes (`v1c`)
 
 > **"Notion with Apple Pencil"** — A native iPadOS handwriting, diagrams, and structured notes application built exclusively with SwiftUI, PencilKit, and UIKit. Zero third-party dependencies.
 
-📄 **[Milestone v1b Technical & Architecture Guide (PDF)](docs/Notes-v1b-Documentation.pdf)** · 📄 **[Milestone v1a Guide (PDF)](docs/Notes-v1a-Documentation.pdf)** · 🏛️ **[Architecture Map (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md)** · 🗺️ **[Product Specification & Roadmap (`SPEC.md`)](SPEC.md)**
+📄 **[Milestone v1c Technical Guide (PDF)](docs/Notes-v1c-Documentation.pdf)** · 📄 **[Milestone v1b Guide (PDF)](docs/Notes-v1b-Documentation.pdf)** · 📄 **[Milestone v1a Guide (PDF)](docs/Notes-v1a-Documentation.pdf)** · 🏛️ **[Architecture Map (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md)** · 🗺️ **[Product Specification & Roadmap (`SPEC.md`)](SPEC.md)**
 
 ---
 
-## ✨ What's New in Milestone `v1b` (Objects, Lasso & Shape Library)
+## ✨ What's New in Milestone `v1c` (Tables & Page Links)
+
+Milestone `v1c — structure` introduces Notion-style structural organization to the handwriting canvas:
+
+- **Handwriting-First Structured Grid Tables**
+  - **Zero Cell-Clipping Architecture**: Vector grid lines sit on the `PageObjectsOverlayView` layer *underneath* `PKCanvasView`. Handwriting strokes float above the grid, letting Apple Pencil ink cross cells naturally (ideal for equations, tall notes, and sketches).
+  - **Individual Column Width Adjustment**: Circular white drag handles (`arrow.left.and.right`) at the top of each column divider let you drag with your finger to resize individual columns (e.g. narrow "ID", wide "Description", medium "Date").
+  - **Uniform Row Height Adjustment**: Circular white drag handles (`arrow.up.and.down`) along the left row dividers let you drag with your finger to scale all row heights uniformly, keeping the handwriting grid neat and consistent.
+  - **One-Tap Presets in Insert Menu**:
+    - **Notes Table** ($3 \times 4$ with header row)
+    - **Terms Table** ($2 \times 5$ with header row)
+    - **Grid Table** ($4 \times 4$ without header row)
+  - **Floating Table Controls**:
+    - Add Row (`+ Row`) and Delete Row (`- Row`)
+    - Add Column (`+ Col`) and Delete Column (`- Col`)
+    - Toggle Header Row shading
+    - 5 stroke colors (Black/White, Slate Gray, Accent Blue, Forest Green, Coral Red)
+    - Delete Table
+  - **Full Geometry Pipeline**: Move, rotate, and resize the table using standard PageObject handles; column dividers and row handles project into the table's rotated coordinate space accurately.
+
+- **Permanent Inter-Page Hyperlinks**
+  - **Page Link Badge Cards**: Notion-style interactive card badges embedded directly onto any page showing a document icon, target page title, notebook/section context breadcrumb, and a "Go to Page" navigation button.
+  - **Searchable Link Picker**: Tap **Insert** $\rightarrow$ **Link to Page…** to open a modal sheet listing every page across all notebooks and sections with live search filtering.
+  - **Instant Navigation**: Tapping a link card instantly jumps the navigation split view to that notebook, section, and page.
+  - **UUID Identity**: Decoupled from names and locations—renaming pages or moving sections never breaks hyperlinks.
+
+- **Multi-Page Vector PDF Export**
+  - Crisp vector rendering of table borders, column dividers, row dividers, header tints, and page-link badge cards in exported PDFs.
+
+---
+
+## 🎨 What Was Built in Milestone `v1b` (Objects, Lasso & Shape Library)
 
 Milestone `v1b` expands handwritten notes into a full diagramming and visual thinking platform:
 
