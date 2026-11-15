@@ -239,40 +239,40 @@ public struct PageObjectsOverlayView: View {
 
     private func columnDividerHandle(for object: PageObject, dividerIndex: Int) -> some View {
         ZStack {
-            // Sleek tactile pill visual (24x12pt with 8pt corner radius)
+            // Sleek high-contrast tactile pill badge
             ZStack {
-                RoundedRectangle(cornerRadius: Self.tableHandleCornerRadius, style: .continuous)
-                    .fill(Theme.Colors.handleFill)
-                    .themeShadow(Theme.Shadows.handle)
-                RoundedRectangle(cornerRadius: Self.tableHandleCornerRadius, style: .continuous)
-                    .strokeBorder(Theme.Colors.handleBorder, lineWidth: 1.6)
+                Capsule()
+                    .fill(Color.white)
+                    .shadow(color: .black.opacity(0.20), radius: 2.5, x: 0, y: 1)
+                Capsule()
+                    .strokeBorder(Color.accentColor, lineWidth: 1.8)
                 Image(systemName: "arrow.left.and.right")
-                    .font(.system(size: 7.5, weight: .bold))
-                    .foregroundStyle(Theme.Colors.handleIcon)
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
             }
-            .frame(width: 24, height: 12)
+            .frame(width: 28, height: 14)
         }
-        .frame(width: Self.tableHandleTouchTargetSize, height: Self.tableHandleTouchTargetSize)
+        .frame(width: 44, height: 44)
         .contentShape(Rectangle())
         .gesture(columnDividerGesture(for: object, dividerIndex: dividerIndex))
     }
 
     private func rowDividerHandle(for object: PageObject, rowIndex: Int) -> some View {
         ZStack {
-            // Sleek tactile pill visual (12x24pt with 8pt corner radius)
+            // Sleek high-contrast tactile pill badge
             ZStack {
-                RoundedRectangle(cornerRadius: Self.tableHandleCornerRadius, style: .continuous)
-                    .fill(Theme.Colors.handleFill)
-                    .themeShadow(Theme.Shadows.handle)
-                RoundedRectangle(cornerRadius: Self.tableHandleCornerRadius, style: .continuous)
-                    .strokeBorder(Theme.Colors.handleBorder, lineWidth: 1.6)
+                Capsule()
+                    .fill(Color.white)
+                    .shadow(color: .black.opacity(0.20), radius: 2.5, x: 0, y: 1)
+                Capsule()
+                    .strokeBorder(Color.accentColor, lineWidth: 1.8)
                 Image(systemName: "arrow.up.and.down")
-                    .font(.system(size: 7.5, weight: .bold))
-                    .foregroundStyle(Theme.Colors.handleIcon)
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
             }
-            .frame(width: 12, height: 24)
+            .frame(width: 14, height: 28)
         }
-        .frame(width: Self.tableHandleTouchTargetSize, height: Self.tableHandleTouchTargetSize)
+        .frame(width: 44, height: 44)
         .contentShape(Rectangle())
         .gesture(rowHeightGesture(for: object))
     }
@@ -501,16 +501,16 @@ public struct PageObjectsOverlayView: View {
             .buttonStyle(.plain)
             .help("Done Editing Object")
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
         .background(
-            RoundedRectangle(cornerRadius: Theme.CornerRadius.floatingPill, style: .continuous)
-                .fill(Theme.Colors.floatingChromeBackground)
-                .themeShadow(Theme.Shadows.floating)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .shadow(color: Color.black.opacity(0.16), radius: 10, x: 0, y: 3)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: Theme.CornerRadius.floatingPill, style: .continuous)
-                .strokeBorder(Theme.Colors.floatingChromeBorder, lineWidth: 0.8)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1.0)
         )
         .position(x: clampedX, y: toolbarY)
     }
@@ -927,7 +927,7 @@ public struct TableView: View {
                 // Header row background highlight if enabled
                 if hasHeaderRow, let firstH = rowHeights.first {
                     Rectangle()
-                        .fill(strokeColor.swiftUIColor.opacity(0.10))
+                        .fill(strokeColor.swiftUIColor.opacity(0.09))
                         .frame(width: w, height: firstH)
                 }
 
@@ -939,7 +939,7 @@ public struct TableView: View {
 
                     // Outer border
                     context.stroke(
-                        Path(CGRect(x: 0, y: 0, width: size.width, height: size.height)),
+                        Path(roundedRect: CGRect(x: 0, y: 0, width: size.width, height: size.height), cornerRadius: 4),
                         with: .color(color),
                         style: outerStyle
                     )
@@ -951,7 +951,7 @@ public struct TableView: View {
                         var vLine = Path()
                         vLine.move(to: CGPoint(x: currentX, y: 0))
                         vLine.addLine(to: CGPoint(x: currentX, y: size.height))
-                        context.stroke(vLine, with: .color(color.opacity(0.85)), style: innerStyle)
+                        context.stroke(vLine, with: .color(color.opacity(0.80)), style: innerStyle)
                     }
 
                     // Horizontal row lines
@@ -963,10 +963,11 @@ public struct TableView: View {
                         hLine.addLine(to: CGPoint(x: size.width, y: currentY))
                         let isHeaderDivider = (rowIdx == 0 && hasHeaderRow)
                         let rowStyle = isHeaderDivider ? outerStyle : innerStyle
-                        context.stroke(hLine, with: .color(isHeaderDivider ? color : color.opacity(0.85)), style: rowStyle)
+                        context.stroke(hLine, with: .color(isHeaderDivider ? color : color.opacity(0.80)), style: rowStyle)
                     }
                 }
             }
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         }
     }
 }

@@ -266,28 +266,53 @@ public struct PageEditorView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarLeading) {
                 Button(action: onToggleFullScreen) {
-                    Label(
-                        isFullScreen ? "Show Sidebar" : "Full Screen",
-                        systemImage: isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
-                    )
+                    Image(systemName: isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 13, weight: .semibold))
                 }
                 .help(isFullScreen ? "Show sidebar menus" : "Hide sidebars for full-screen writing")
 
-                Button {
-                    undoTriggerCount += 1
-                } label: {
-                    Label("Undo", systemImage: "arrow.uturn.backward")
-                }
-                .disabled(!canUndo)
-                .help("Undo last stroke or object change")
+                HStack(spacing: 0) {
+                    Button {
+                        undoTriggerCount += 1
+                    } label: {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(width: 30, height: 26)
+                    }
+                    .disabled(!canUndo)
+                    .buttonStyle(.plain)
 
-                Button {
-                    redoTriggerCount += 1
-                } label: {
-                    Label("Redo", systemImage: "arrow.uturn.forward")
+                    Divider()
+                        .frame(height: 14)
+
+                    Button {
+                        redoTriggerCount += 1
+                    } label: {
+                        Image(systemName: "arrow.uturn.forward")
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(width: 30, height: 26)
+                    }
+                    .disabled(!canRedo)
+                    .buttonStyle(.plain)
                 }
-                .disabled(!canRedo)
-                .help("Redo stroke or object change")
+                .padding(.horizontal, 3)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.8))
+            }
+
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 6) {
+                    Image(systemName: "note.text")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                    Text(pagePositionLabel)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.8))
             }
 
             ToolbarItemGroup(placement: .topBarTrailing) {

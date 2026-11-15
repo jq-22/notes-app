@@ -81,19 +81,32 @@ public struct DrawingToolMenuButton: View {
             subpage = .root
             isPopoverPresented.toggle()
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Image(systemName: toolState.activeTool.systemImageName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+
                 Circle()
                     .fill(activeIndicatorColor)
-                    .frame(width: 9, height: 9)
-                    .overlay(Circle().stroke(Color.primary.opacity(0.25), lineWidth: 0.75))
+                    .frame(width: 10, height: 10)
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.25), lineWidth: 1.0))
+
                 if toolState.isRulerActive {
                     Image(systemName: "ruler")
-                        .font(.caption2)
-                        .foregroundStyle(.tint)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.accentColor)
                 }
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.30), lineWidth: 1.0))
         }
+        .buttonStyle(.plain)
         .help("Drawing Tools (\(toolState.activeTool.displayName))")
         .popover(isPresented: $isPopoverPresented, arrowEdge: .top) {
             VStack(alignment: .leading, spacing: 0) {
