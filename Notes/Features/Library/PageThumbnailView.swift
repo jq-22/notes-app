@@ -94,14 +94,14 @@ public struct PageThumbnailView: View {
                 .padding(3)
         }
         .frame(width: Theme.Thumbnail.width, height: Theme.Thumbnail.height)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.page))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.pageThumbnail))
         .overlay(
-            RoundedRectangle(cornerRadius: Theme.CornerRadius.page)
+            RoundedRectangle(cornerRadius: Theme.CornerRadius.pageThumbnail)
                 .stroke(
                     isSelected ? Theme.Colors.selectedThumbnailBorder : Theme.Colors.pageBorder,
                     lineWidth: isSelected ? 2.0 : 1.0
                 )
         )
-        .shadow(color: .black.opacity(0.06), radius: 1, x: 0, y: 1)
+        .themeShadow(Theme.Shadows.subtleCard)
     }
 }

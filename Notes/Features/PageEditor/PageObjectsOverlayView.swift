@@ -31,11 +31,14 @@ public struct PageObjectsOverlayView: View {
     @State private var dragStartObject: PageObject?
     @State private var dragStartAllObjects: [PageObject]?
     @State private var isActivelyDraggingHandle: Bool = false
+    @State private var lastDetentStep: Int = 0
 
     private static let coordinateSpaceName = "A4PageCoordinateSpace"
     private static let rotateHandleLength: CGFloat = 28.0
     private static let cornerDotDiameter: CGFloat = 13.0
     private static let cornerHitTargetSize: CGFloat = 34.0
+    private static let tableHandleTouchTargetSize: CGFloat = 44.0
+    private static let tableHandleCornerRadius: CGFloat = Theme.CornerRadius.tableHandle
 
     public init(
         objects: [PageObject],
@@ -74,15 +77,6 @@ public struct PageObjectsOverlayView: View {
 
     public var body: some View {
         ZStack(alignment: .topLeading) {
-            // Transparent background tap catcher when in interactive object mode so tapping empty space deselects
-            if isInteractive {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        onSelectObject(nil)
-                    }
-            }
-
             ForEach(sortedObjects) { object in
                 let isSelected = isInteractive && (object.id == selectedObjectID)
                 objectItemView(for: object, isSelected: isSelected)
@@ -104,7 +98,6 @@ public struct PageObjectsOverlayView: View {
                         onNavigateToPage?(targetPageID, targetSecID, targetNbID)
                         return
                     }
-                    guard isInteractive else { return }
                     onSelectObject(object.id)
                 }
                 .gesture(
@@ -246,36 +239,40 @@ public struct PageObjectsOverlayView: View {
 
     private func columnDividerHandle(for object: PageObject, dividerIndex: Int) -> some View {
         ZStack {
-            Circle()
-                .fill(Color.white)
-                .frame(width: 16, height: 16)
-                .shadow(color: .black.opacity(0.20), radius: 2, x: 0, y: 1)
-            Circle()
-                .strokeBorder(Color.accentColor, lineWidth: 2.0)
-                .frame(width: 16, height: 16)
-            Image(systemName: "arrow.left.and.right")
-                .font(.system(size: 7.5, weight: .bold))
-                .foregroundStyle(Color.accentColor)
+            // Sleek tactile pill visual (24x12pt with 8pt corner radius)
+            ZStack {
+                RoundedRectangle(cornerRadius: Self.tableHandleCornerRadius, style: .continuous)
+                    .fill(Theme.Colors.handleFill)
+                    .themeShadow(Theme.Shadows.handle)
+                RoundedRectangle(cornerRadius: Self.tableHandleCornerRadius, style: .continuous)
+                    .strokeBorder(Theme.Colors.handleBorder, lineWidth: 1.6)
+                Image(systemName: "arrow.left.and.right")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundStyle(Theme.Colors.handleIcon)
+            }
+            .frame(width: 24, height: 12)
         }
-        .frame(width: Self.cornerHitTargetSize, height: Self.cornerHitTargetSize)
+        .frame(width: Self.tableHandleTouchTargetSize, height: Self.tableHandleTouchTargetSize)
         .contentShape(Rectangle())
         .gesture(columnDividerGesture(for: object, dividerIndex: dividerIndex))
     }
 
     private func rowDividerHandle(for object: PageObject, rowIndex: Int) -> some View {
         ZStack {
-            Circle()
-                .fill(Color.white)
-                .frame(width: 16, height: 16)
-                .shadow(color: .black.opacity(0.20), radius: 2, x: 0, y: 1)
-            Circle()
-                .strokeBorder(Color.accentColor, lineWidth: 2.0)
-                .frame(width: 16, height: 16)
-            Image(systemName: "arrow.up.and.down")
-                .font(.system(size: 7.5, weight: .bold))
-                .foregroundStyle(Color.accentColor)
+            // Sleek tactile pill visual (12x24pt with 8pt corner radius)
+            ZStack {
+                RoundedRectangle(cornerRadius: Self.tableHandleCornerRadius, style: .continuous)
+                    .fill(Theme.Colors.handleFill)
+                    .themeShadow(Theme.Shadows.handle)
+                RoundedRectangle(cornerRadius: Self.tableHandleCornerRadius, style: .continuous)
+                    .strokeBorder(Theme.Colors.handleBorder, lineWidth: 1.6)
+                Image(systemName: "arrow.up.and.down")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundStyle(Theme.Colors.handleIcon)
+            }
+            .frame(width: 12, height: 24)
         }
-        .frame(width: Self.cornerHitTargetSize, height: Self.cornerHitTargetSize)
+        .frame(width: Self.tableHandleTouchTargetSize, height: Self.tableHandleTouchTargetSize)
         .contentShape(Rectangle())
         .gesture(rowHeightGesture(for: object))
     }
@@ -507,13 +504,13 @@ public struct PageObjectsOverlayView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
-            Capsule()
-                .fill(Color(uiColor: .systemBackground))
-                .shadow(color: .black.opacity(0.16), radius: 6, x: 0, y: 2)
+            RoundedRectangle(cornerRadius: Theme.CornerRadius.floatingPill, style: .continuous)
+                .fill(Theme.Colors.floatingChromeBackground)
+                .themeShadow(Theme.Shadows.floating)
         )
         .overlay(
-            Capsule()
-                .strokeBorder(Color(uiColor: .separator), lineWidth: 0.8)
+            RoundedRectangle(cornerRadius: Theme.CornerRadius.floatingPill, style: .continuous)
+                .strokeBorder(Theme.Colors.floatingChromeBorder, lineWidth: 0.8)
         )
         .position(x: clampedX, y: toolbarY)
     }
@@ -664,8 +661,17 @@ public struct PageObjectsOverlayView: View {
                     dragStartObject = object
                     dragStartAllObjects = objects
                     isActivelyDraggingHandle = true
+                    lastDetentStep = 0
                 }
                 guard let initial = dragStartObject else { return }
+
+                // Tactile detent feedback every 8pt of drag distance
+                let step = Int(round(value.translation.width / Theme.Spacing.grid8))
+                if step != lastDetentStep {
+                    lastDetentStep = step
+                    UISelectionFeedbackGenerator().selectionChanged()
+                }
+
                 let updated = initial.adjustingColumnDivider(at: dividerIndex, pageDelta: value.translation)
                 onUpdateObjectLive(updated)
             }
@@ -674,6 +680,7 @@ public struct PageObjectsOverlayView: View {
                     dragStartObject = nil
                     dragStartAllObjects = nil
                     isActivelyDraggingHandle = false
+                    lastDetentStep = 0
                 }
                 guard let initial = dragStartObject, let before = dragStartAllObjects else { return }
                 let finalObj = initial.adjustingColumnDivider(at: dividerIndex, pageDelta: value.translation)
@@ -692,8 +699,17 @@ public struct PageObjectsOverlayView: View {
                     dragStartObject = object
                     dragStartAllObjects = objects
                     isActivelyDraggingHandle = true
+                    lastDetentStep = 0
                 }
                 guard let initial = dragStartObject else { return }
+
+                // Tactile detent feedback every 8pt of drag distance
+                let step = Int(round(value.translation.height / Theme.Spacing.grid8))
+                if step != lastDetentStep {
+                    lastDetentStep = step
+                    UISelectionFeedbackGenerator().selectionChanged()
+                }
+
                 let updated = initial.adjustingTableRowHeight(pageDelta: value.translation)
                 onUpdateObjectLive(updated)
             }
@@ -702,6 +718,7 @@ public struct PageObjectsOverlayView: View {
                     dragStartObject = nil
                     dragStartAllObjects = nil
                     isActivelyDraggingHandle = false
+                    lastDetentStep = 0
                 }
                 guard let initial = dragStartObject, let before = dragStartAllObjects else { return }
                 let finalObj = initial.adjustingTableRowHeight(pageDelta: value.translation)
@@ -975,39 +992,50 @@ public struct PageLinkBadgeView: View {
     }
 
     public var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "doc.text.fill")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
+        HStack(spacing: 10) {
+            // 32x32pt squircle icon container with accent tint
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.12))
+                    .frame(width: 32, height: 32)
 
+                Image(systemName: "doc.text.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+            }
+            .frame(width: 32, height: 32)
+
+            // Headline title & caption breadcrumb
             VStack(alignment: .leading, spacing: 1) {
                 Text(fallbackTitle)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(Theme.Fonts.cardTitle)
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
                 Text("Linked Page")
-                    .font(.system(size: 9.5, weight: .regular))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
 
             Spacer(minLength: 4)
 
+            // Right-up chevron arrow
             Image(systemName: "arrow.up.right")
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color(uiColor: .secondarySystemBackground))
-                .shadow(color: .black.opacity(0.06), radius: 2, x: 0, y: 1)
+            RoundedRectangle(cornerRadius: Theme.CornerRadius.linkCard, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .themeShadow(Theme.Shadows.subtleCard)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.accentColor.opacity(0.3), lineWidth: 1.2)
+            RoundedRectangle(cornerRadius: Theme.CornerRadius.linkCard, style: .continuous)
+                .strokeBorder(Theme.Colors.cardBorder, lineWidth: 1.0)
         )
     }
 }

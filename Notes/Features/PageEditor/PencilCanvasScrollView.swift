@@ -139,8 +139,8 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             coordinator?.handleViewportSizeChanged(newSize)
         }
 
-        // Page container at A4 portrait points (595 x 842)
-        let pageContainer = UIView(frame: CGRect(origin: .zero, size: PageGeometry.a4Size))
+        // Page container wrapped in HybridPageContainerView at A4 portrait points (595 x 842)
+        let pageContainer = HybridPageContainerView(frame: CGRect(origin: .zero, size: PageGeometry.a4Size))
         pageContainer.backgroundColor = UIColor.systemBackground
         pageContainer.layer.cornerRadius = Theme.CornerRadius.page
         pageContainer.layer.borderWidth = 1.0
@@ -167,7 +167,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         objectsHost.view.isOpaque = false
         objectsHost.view.layer.cornerRadius = Theme.CornerRadius.page
         objectsHost.view.clipsToBounds = false
-        objectsHost.view.isUserInteractionEnabled = isInteractiveObjectMode
+        objectsHost.view.isUserInteractionEnabled = true
         pageContainer.addSubview(objectsHost.view)
 
         // 3. Transparent PKCanvasView layer on top of paper (exact working setup)
@@ -179,6 +179,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         canvasView.drawingPolicy = .pencilOnly
         canvasView.isScrollEnabled = false // Outer UIScrollView handles scrolling and zooming
         canvasView.delegate = context.coordinator
+        canvasView.isUserInteractionEnabled = true
         pageContainer.addSubview(canvasView)
 
         // 4. Freehand Lasso overlay layer
@@ -189,6 +190,11 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         lassoHost.view.isOpaque = false
         lassoHost.view.isUserInteractionEnabled = isLassoModeActive
         pageContainer.addSubview(lassoHost.view)
+
+        // Configure references on HybridPageContainerView
+        pageContainer.canvasView = canvasView
+        pageContainer.objectsHostingView = objectsHost.view
+        pageContainer.lassoHostingView = lassoHost.view
 
         // 5. Apple Pencil double-tap interaction -> switch to Rubber (Eraser) and back
         let pencilInteraction = UIPencilInteraction()
@@ -235,7 +241,13 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
 
     public func updateUIView(_ scrollView: UIScrollView, context: Context) {
         context.coordinator.parent = self
-        context.coordinator.paperHostingController?.rootView = PaperBackgroundView(paperType: paperType)
+        let screenScale = scrollView.window?.screen.scale ?? UIScreen.main.scale
+        let clampedZoom = min(max(scrollView.zoomScale, 1.0), PencilCanvasScrollView.maximumZoomScale)
+        let effectiveScale = screenScale * clampedZoom
+        context.coordinator.paperHostingController?.rootView = PaperBackgroundView(
+            paperType: paperType,
+            displayScale: effectiveScale
+        )
         context.coordinator.loadPageIfNeeded(pageID: pageID, data: initialDrawingData, objects: pageObjects)
         context.coordinator.recordExternalObjectAdditionOrDeletionIfNeeded(currentObjects: pageObjects)
         if !isLassoModeActive && context.coordinator.activeLassoSelection != nil {
@@ -562,17 +574,14 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                   let lassoView = lassoHostingController?.view,
                   let canvasView else { return }
 
-            objectsView.isUserInteractionEnabled = isInteractive && !isLassoActive
             lassoView.isUserInteractionEnabled = isLassoActive
-            canvasView.isUserInteractionEnabled = !isInteractive && !isLassoActive
+            objectsView.isUserInteractionEnabled = !isLassoActive
+            canvasView.isUserInteractionEnabled = !isLassoActive
 
             if isLassoActive {
                 pageContainerView.bringSubviewToFront(lassoView)
-            } else if isInteractive {
-                // Bring objectsView to front while manipulating handles so corner dots and floating bar sit above ink
-                pageContainerView.bringSubviewToFront(objectsView)
             } else {
-                // Keep PKCanvasView in front when drawing so Apple Pencil ink renders over objects seamlessly
+                // Keep PKCanvasView in front visually so ink renders over tables and objects
                 pageContainerView.bringSubviewToFront(canvasView)
             }
         }
@@ -677,12 +686,19 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         private func updatePaperRenderScale(for zoomScale: CGFloat, in scrollView: UIScrollView) {
             let screenScale = scrollView.window?.screen.scale ?? UIScreen.main.scale
             let clampedZoom = min(max(zoomScale, 1.0), PencilCanvasScrollView.maximumZoomScale)
+            let effectiveScale = screenScale * clampedZoom
+
             if let paperView = paperHostingController?.view {
-                paperView.contentScaleFactor = screenScale * clampedZoom
+                paperView.contentScaleFactor = effectiveScale
                 paperView.setNeedsDisplay()
             }
+            paperHostingController?.rootView = PaperBackgroundView(
+                paperType: parent.paperType,
+                displayScale: effectiveScale
+            )
+
             if let objectsView = objectsHostingController?.view {
-                objectsView.contentScaleFactor = screenScale * clampedZoom
+                objectsView.contentScaleFactor = effectiveScale
                 objectsView.setNeedsDisplay()
             }
         }
@@ -912,14 +928,20 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         }
 
         @objc func handleSingleFingerTap(_ recognizer: UITapGestureRecognizer) {
-            guard recognizer.state == .ended,
-                  parent.selectedObjectID == nil,
-                  let pageContainerView,
-                  !parent.pageObjects.isEmpty else {
-                return
-            }
+            guard recognizer.state == .ended, let pageContainerView else { return }
             let locationInPage = recognizer.location(in: pageContainerView)
-            // Check from topmost object (highest zIndex) down
+
+            // If an object was selected, tapping empty space deselects it
+            if parent.selectedObjectID != nil {
+                let hitAnyObject = parent.pageObjects.contains { $0.contains(pagePoint: locationInPage, tolerance: 8.0) }
+                if !hitAnyObject {
+                    parent.onSelectObject(nil)
+                    return
+                }
+            }
+
+            // Select tapped object if not already selected
+            guard !parent.pageObjects.isEmpty else { return }
             let sortedTopDown = parent.pageObjects.sorted { lhs, rhs in
                 if lhs.zIndex == rhs.zIndex {
                     return lhs.createdAt > rhs.createdAt
@@ -1087,6 +1109,50 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             }
             return pts
         }
+    }
+}
+
+/// Custom page container view providing hardware-level touch routing ("Glass Sandwich"):
+/// - Apple Pencil (.pencil touches) routes directly to PKCanvasView for 120Hz Metal inking across the entire page.
+/// - Finger touches on interactive blocks (table handles, selection dots, buttons) route to objectsHostingView.
+/// - Finger touches on non-interactive empty space fall through to the parent CenteringScrollView for pan/zoom.
+final class HybridPageContainerView: UIView {
+    weak var canvasView: PKCanvasView?
+    weak var objectsHostingView: UIView?
+    weak var lassoHostingView: UIView?
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard isUserInteractionEnabled, !isHidden, alpha > 0.01 else { return nil }
+        guard self.point(inside: point, with: event) else { return nil }
+
+        // 1. Freehand Lasso tool precedence when active
+        if let lassoView = lassoHostingView, lassoView.isUserInteractionEnabled {
+            let lassoPoint = convert(point, to: lassoView)
+            if let hit = lassoView.hitTest(lassoPoint, with: event) {
+                return hit
+            }
+        }
+
+        // 2. Hardware-level Apple Pencil routing:
+        // Always route pencil directly to PKCanvasView for 120Hz Metal inking over all objects.
+        let isPencil = event?.allTouches?.contains(where: { $0.type == .pencil }) ?? false
+        if isPencil {
+            if let canvasView, canvasView.isUserInteractionEnabled {
+                let canvasPoint = convert(point, to: canvasView)
+                return canvasView.hitTest(canvasPoint, with: event)
+            }
+        }
+
+        // 3. Interactive object controls (finger touches on handles, buttons, cards)
+        if let objectsView = objectsHostingView, objectsView.isUserInteractionEnabled {
+            let objectsPoint = convert(point, to: objectsView)
+            if let hit = objectsView.hitTest(objectsPoint, with: event), hit !== objectsView {
+                return hit
+            }
+        }
+
+        // 4. Return nil for empty space so outer CenteringScrollView handles pan and pinch-to-zoom
+        return nil
     }
 }
 
