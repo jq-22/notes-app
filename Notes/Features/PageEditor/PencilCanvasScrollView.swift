@@ -138,6 +138,13 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         scrollView.onViewportSizeChanged = { [weak coordinator = context.coordinator] newSize in
             coordinator?.handleViewportSizeChanged(newSize)
         }
+        scrollView.isTouchOverSelectedObject = { [weak coordinator = context.coordinator] pointInPage in
+            guard let coordinator,
+                  let selectedID = coordinator.parent.selectedObjectID,
+                  let selectedObj = coordinator.parent.pageObjects.first(where: { $0.id == selectedID })
+            else { return false }
+            return selectedObj.contains(pagePoint: pointInPage, tolerance: 44.0)
+        }
 
         // Page container at A4 portrait points (595 x 842)
         let pageContainer = UIView(frame: CGRect(origin: .zero, size: PageGeometry.a4Size))
@@ -203,7 +210,6 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         // Critical: Restrict scrollView panning exclusively to fingers (.direct).
         // Apple Pencil (.pencil) touches will NEVER scroll/move the canvas, guaranteeing 100% inking to PKCanvasView!
         scrollView.panGestureRecognizer.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
-        scrollView.panGestureRecognizer.delegate = context.coordinator
 
         // Double-tap with finger to toggle between Fit-Width and Fit-Whole-Page
         let doubleTap = UITapGestureRecognizer(
@@ -269,7 +275,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
     // MARK: - Coordinator
 
     @MainActor
-    public final class Coordinator: NSObject, UIScrollViewDelegate, PKCanvasViewDelegate, UIGestureRecognizerDelegate, UIPencilInteractionDelegate {
+    public final class Coordinator: NSObject, UIScrollViewDelegate, PKCanvasViewDelegate, UIPencilInteractionDelegate {
         var parent: PencilCanvasScrollView
         weak var scrollView: CenteringScrollView?
         weak var pageContainerView: UIView?
@@ -1007,21 +1013,6 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             }
         }
 
-        // MARK: - UIGestureRecognizerDelegate
-
-        public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-            // When an object or table is selected, do NOT let scrollView pan intercept touches on or near the object
-            if let selectedID = parent.selectedObjectID,
-               let selectedObj = parent.pageObjects.first(where: { $0.id == selectedID }),
-               let pageContainerView {
-                let touchInPage = touch.location(in: pageContainerView)
-                if selectedObj.contains(pagePoint: touchInPage, tolerance: 44.0) {
-                    return false
-                }
-            }
-            return true
-        }
-
         private func horizontalEdgeStates(in scrollView: UIScrollView) -> (atLeftEdge: Bool, atRightEdge: Bool) {
             let scaledPageWidth = PageGeometry.a4Width * scrollView.zoomScale
             let fitWidthMax = scrollView.bounds.width - (PageGeometry.viewportPadding * 1.5)
@@ -1145,8 +1136,29 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
 final class CenteringScrollView: UIScrollView {
     weak var pageContainerView: UIView?
     var onViewportSizeChanged: ((CGSize) -> Void)?
+    var isTouchOverSelectedObject: ((CGPoint) -> Bool)?
     private var lastReportedViewportSize: CGSize = .zero
     private let workspaceMargin: CGFloat = PageGeometry.viewportPadding
+
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === panGestureRecognizer, let isTouchOverSelectedObject, let pageContainerView {
+            let pointInPage = gestureRecognizer.location(in: pageContainerView)
+            if isTouchOverSelectedObject(pointInPage) {
+                return false
+            }
+        }
+        return super.gestureRecognizerShouldBegin(gestureRecognizer)
+    }
+
+    override func touchesShouldCancel(in view: UIView) -> Bool {
+        if let pageContainerView, let isTouchOverSelectedObject {
+            let pointInPage = panGestureRecognizer.location(in: pageContainerView)
+            if isTouchOverSelectedObject(pointInPage) {
+                return false
+            }
+        }
+        return super.touchesShouldCancel(in: view)
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
