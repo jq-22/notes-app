@@ -179,7 +179,6 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
 
         // 3. Transparent PKCanvasView layer on top of paper
         let canvasView = PKCanvasView(frame: pageContainer.bounds)
-        canvasView.overrideUserInterfaceStyle = .light
         canvasView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         canvasView.backgroundColor = .clear
         canvasView.isOpaque = false

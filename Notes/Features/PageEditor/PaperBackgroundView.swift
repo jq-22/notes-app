@@ -38,8 +38,8 @@ public struct PaperBackgroundView: View {
         Canvas { context, size in
             guard lineSpacing > 2 else { return }
 
-            let hairline = 1.0 / effectiveScale
-            let marginLineWidth = Swift.max(hairline * 1.5, 0.75)
+            let hairline = Swift.max(1.0 / effectiveScale, 0.75)
+            let marginLineWidth = Swift.max(hairline * 1.5, 1.0)
 
             switch paperType {
             case .blank:

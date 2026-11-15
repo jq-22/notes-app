@@ -61,8 +61,20 @@ public enum Theme {
         public static let canvasWorkspaceBackground = Color(uiColor: .secondarySystemBackground)
         public static let pageBackground = Color(uiColor: .systemBackground)
         public static let pageBorder = Color(uiColor: .separator)
-        public static let paperRuleLine = Color.primary.opacity(0.16)
-        public static let paperMarginLine = Color.red.opacity(0.28)
+        public static let paperRuleLine = Color(
+            uiColor: UIColor { trait in
+                trait.userInterfaceStyle == .dark
+                    ? UIColor(white: 1.0, alpha: 0.38)
+                    : UIColor(white: 0.0, alpha: 0.18)
+            }
+        )
+        public static let paperMarginLine = Color(
+            uiColor: UIColor { trait in
+                trait.userInterfaceStyle == .dark
+                    ? UIColor.systemRed.withAlphaComponent(0.60)
+                    : UIColor.systemRed.withAlphaComponent(0.30)
+            }
+        )
         public static let selectedThumbnailBorder = Color.accentColor
 
         // R2 & R3 Dynamic Tokens
