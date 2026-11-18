@@ -433,4 +433,41 @@ struct LibraryViewModelTests {
         #expect(vm.selectedPageID == page2ID)
         #expect(vm.selectedObjectID == nil)
     }
+
+    @Test("LibraryViewModel toggles bookmarks, persists changes, and handles filtering")
+    func bookmarkOperationsAndFiltering() throws {
+        let fake = InMemoryPageStore()
+        let vm = LibraryViewModel(store: fake)
+
+        let notebook = vm.createNotebook(title: "Architecture")
+        let sectionID = try #require(notebook.sections.first?.id)
+        let page1ID = try #require(notebook.sections.first?.pages.first?.id)
+        let page2 = try #require(vm.createPage(in: sectionID, notebookID: notebook.id, title: "Drafting"))
+
+        vm.selectedPageID = page1ID
+        #expect(vm.isBookmarkFilterActive == false)
+        #expect(vm.selectedPage?.isBookmarked == false)
+
+        // Toggle bookmark on page 1
+        vm.toggleBookmark(id: page1ID, in: sectionID, notebookID: notebook.id)
+        #expect(vm.selectedPage?.isBookmarked == true)
+        #expect(fake.storedNotebooks.first?.sections.first?.pages.first?.isBookmarked == true)
+
+        // Page 2 is not bookmarked
+        let p2InStore = fake.storedNotebooks.first?.sections.first?.pages.first(where: { $0.id == page2.id })
+        #expect(p2InStore?.isBookmarked == false)
+
+        // Set explicit bookmark on page 2
+        vm.setPageBookmarked(id: page2.id, in: sectionID, notebookID: notebook.id, to: true)
+        let p2Bookmarked = fake.storedNotebooks.first?.sections.first?.pages.first(where: { $0.id == page2.id })
+        #expect(p2Bookmarked?.isBookmarked == true)
+
+        // Toggle page 1 back to false
+        vm.toggleBookmark(id: page1ID, in: sectionID, notebookID: notebook.id)
+        #expect(vm.selectedPage?.isBookmarked == false)
+
+        // Test filter state toggle
+        vm.isBookmarkFilterActive = true
+        #expect(vm.isBookmarkFilterActive == true)
+    }
 }

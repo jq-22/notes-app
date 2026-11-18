@@ -68,6 +68,9 @@ public final class LibraryViewModel {
     /// Non-nil when a save or load operation fails; bound to a user-visible alert.
     public var activeErrorMessage: String?
 
+    /// When `true`, the page list only displays bookmarked pages for rapid navigation.
+    public var isBookmarkFilterActive: Bool = false
+
     /// User preference for Scribble-to-Erase (persisted in UserDefaults, defaults to true).
     public var isScribbleToEraseEnabled: Bool {
         didSet {
@@ -457,6 +460,39 @@ public final class LibraryViewModel {
         }
         let now = Date()
         notebooks[indices.notebook].sections[indices.section].pages[indices.page].setPaperTypeOverride(overrideType, now: now)
+        notebooks[indices.notebook].sections[indices.section].updatedAt = now
+        notebooks[indices.notebook].updatedAt = now
+        saveNow()
+    }
+
+    /// Toggles the bookmark status for a page and persists the change.
+    public func toggleBookmark(
+        id pageID: UUID,
+        in sectionID: UUID? = nil,
+        notebookID: UUID? = nil
+    ) {
+        guard let indices = pageIndices(pageID: pageID, sectionID: sectionID, notebookID: notebookID) else {
+            return
+        }
+        let now = Date()
+        notebooks[indices.notebook].sections[indices.section].pages[indices.page].toggleBookmark(now: now)
+        notebooks[indices.notebook].sections[indices.section].updatedAt = now
+        notebooks[indices.notebook].updatedAt = now
+        saveNow()
+    }
+
+    /// Sets explicit bookmark status for a page.
+    public func setPageBookmarked(
+        id pageID: UUID,
+        in sectionID: UUID? = nil,
+        notebookID: UUID? = nil,
+        to isBookmarked: Bool
+    ) {
+        guard let indices = pageIndices(pageID: pageID, sectionID: sectionID, notebookID: notebookID) else {
+            return
+        }
+        let now = Date()
+        notebooks[indices.notebook].sections[indices.section].pages[indices.page].setBookmarked(isBookmarked, now: now)
         notebooks[indices.notebook].sections[indices.section].updatedAt = now
         notebooks[indices.notebook].updatedAt = now
         saveNow()

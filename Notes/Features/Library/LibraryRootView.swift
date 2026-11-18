@@ -248,6 +248,14 @@ public struct LibraryRootView: View {
                     .help("Default paper type for new pages in this notebook")
 
                     Button {
+                        viewModel.isBookmarkFilterActive.toggle()
+                    } label: {
+                        Image(systemName: viewModel.isBookmarkFilterActive ? "bookmark.fill" : "bookmark")
+                            .foregroundStyle(viewModel.isBookmarkFilterActive ? .orange : .primary)
+                    }
+                    .help(viewModel.isBookmarkFilterActive ? "Show all pages" : "Show only bookmarked pages")
+
+                    Button {
                         viewModel.createSection(in: notebook.id)
                     } label: {
                         Label("New Section", systemImage: "folder.badge.plus")
@@ -338,60 +346,87 @@ public struct LibraryRootView: View {
     @ViewBuilder
     private func pagesList(for notebook: Notebook) -> some View {
         if let section = viewModel.selectedSection {
-            VStack(spacing: 0) {
-                List(
-                    selection: isSelectingPages
-                        ? $selectedPageIDsForBatch
-                        : Binding<Set<UUID>>(
-                            get: { viewModel.selectedPageID.map { [$0] } ?? [] },
-                            set: { newSet in
-                                if let first = newSet.first {
-                                    viewModel.selectedPageID = first
-                                }
-                            }
-                        )
-                ) {
-                    Section {
-                        ForEach(Array(section.pages.enumerated()), id: \.element.id) { index, page in
-                            let effectivePaper = page.effectivePaperType(notebookDefault: notebook.defaultPaperType)
-                            let _ = viewModel.drawingRevisionByPageID[page.id]
-                            HStack(spacing: Theme.Spacing.medium) {
-                                PageThumbnailView(
-                                    paperType: effectivePaper,
-                                    drawingData: viewModel.loadDrawingData(for: page.id),
-                                    pageObjects: page.objects,
-                                    assetDataProvider: { viewModel.loadAssetData(for: $0) },
-                                    pageNumber: index + 1,
-                                    isSelected: isSelectingPages
-                                        ? selectedPageIDsForBatch.contains(page.id)
-                                        : (viewModel.selectedPageID == page.id)
-                                )
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(page.title)
-                                        .font(Theme.Fonts.rowTitle)
-                                    HStack(spacing: 4) {
-                                        Image(systemName: effectivePaper.systemImageName)
-                                        Text(effectivePaper.displayName)
-                                        if page.paperTypeOverride != nil {
-                                            Text("(Custom)")
-                                        }
+            let displayedPages = viewModel.isBookmarkFilterActive
+                ? section.pages.filter(\.isBookmarked)
+                : section.pages
+
+            if viewModel.isBookmarkFilterActive && displayedPages.isEmpty {
+                ContentUnavailableView(
+                    "No Bookmarked Pages",
+                    systemImage: "bookmark",
+                    description: Text("Bookmark pages in \"\(section.title)\" to find them quickly here.")
+                )
+            } else {
+                VStack(spacing: 0) {
+                    List(
+                        selection: isSelectingPages
+                            ? $selectedPageIDsForBatch
+                            : Binding<Set<UUID>>(
+                                get: { viewModel.selectedPageID.map { [$0] } ?? [] },
+                                set: { newSet in
+                                    if let first = newSet.first {
+                                        viewModel.selectedPageID = first
                                     }
-                                    .font(Theme.Fonts.rowSubtitle)
-                                    .foregroundStyle(.secondary)
                                 }
-                            }
-                            .padding(.vertical, 2)
-                            .tag(page.id)
-                            .contextMenu {
-                                Button {
-                                    viewModel.createPage(
-                                        in: section.id,
-                                        notebookID: notebook.id,
-                                        afterPageID: page.id
+                            )
+                    ) {
+                        Section {
+                            ForEach(Array(displayedPages.enumerated()), id: \.element.id) { index, page in
+                                let effectivePaper = page.effectivePaperType(notebookDefault: notebook.defaultPaperType)
+                                let _ = viewModel.drawingRevisionByPageID[page.id]
+                                HStack(spacing: Theme.Spacing.medium) {
+                                    PageThumbnailView(
+                                        paperType: effectivePaper,
+                                        drawingData: viewModel.loadDrawingData(for: page.id),
+                                        pageObjects: page.objects,
+                                        assetDataProvider: { viewModel.loadAssetData(for: $0) },
+                                        pageNumber: index + 1,
+                                        isBookmarked: page.isBookmarked,
+                                        isSelected: isSelectingPages
+                                            ? selectedPageIDsForBatch.contains(page.id)
+                                            : (viewModel.selectedPageID == page.id)
                                     )
-                                } label: {
-                                    Label("Add Page Below", systemImage: "doc.badge.plus")
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack(spacing: 4) {
+                                            Text(page.title)
+                                                .font(Theme.Fonts.rowTitle)
+                                            if page.isBookmarked {
+                                                Image(systemName: "bookmark.fill")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.orange)
+                                            }
+                                        }
+                                        HStack(spacing: 4) {
+                                            Image(systemName: effectivePaper.systemImageName)
+                                            Text(effectivePaper.displayName)
+                                            if page.paperTypeOverride != nil {
+                                                Text("(Custom)")
+                                            }
+                                        }
+                                        .font(Theme.Fonts.rowSubtitle)
+                                        .foregroundStyle(.secondary)
+                                    }
                                 }
+                                .padding(.vertical, 2)
+                                .tag(page.id)
+                                .contextMenu {
+                                    Button {
+                                        viewModel.toggleBookmark(id: page.id, in: section.id, notebookID: notebook.id)
+                                    } label: {
+                                        Label(page.isBookmarked ? "Remove Bookmark" : "Bookmark Page", systemImage: page.isBookmarked ? "bookmark.slash" : "bookmark")
+                                    }
+
+                                    Divider()
+
+                                    Button {
+                                        viewModel.createPage(
+                                            in: section.id,
+                                            notebookID: notebook.id,
+                                            afterPageID: page.id
+                                        )
+                                    } label: {
+                                        Label("Add Page Below", systemImage: "doc.badge.plus")
+                                    }
 
                                 Button {
                                     beginRename(.page(notebookID: notebook.id, sectionID: section.id, pageID: page.id, currentTitle: page.title))
@@ -480,6 +515,14 @@ public struct LibraryRootView: View {
                                     Label("Delete Page", systemImage: "trash")
                                 }
                             }
+                            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                                Button {
+                                    viewModel.toggleBookmark(id: page.id, in: section.id, notebookID: notebook.id)
+                                } label: {
+                                    Label(page.isBookmarked ? "Unbookmark" : "Bookmark", systemImage: page.isBookmarked ? "bookmark.slash" : "bookmark.fill")
+                                }
+                                .tint(.orange)
+                            }
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 Button(role: .destructive) {
                                     deleteTarget = .page(
@@ -509,9 +552,9 @@ public struct LibraryRootView: View {
                         }
                     } header: {
                         HStack {
-                            Text("Pages in \(section.title)")
+                            Text(viewModel.isBookmarkFilterActive ? "Bookmarked in \(section.title)" : "Pages in \(section.title)")
                             Spacer()
-                            if !section.pages.isEmpty {
+                            if !displayedPages.isEmpty {
                                 Button(isSelectingPages ? "Done" : "Select") {
                                     isSelectingPages.toggle()
                                     if !isSelectingPages {
@@ -548,6 +591,7 @@ public struct LibraryRootView: View {
                         }
                     }
                 }
+            }
 
                 if isSelectingPages {
                     Divider()

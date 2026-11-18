@@ -15,6 +15,7 @@ public struct PageThumbnailView: View {
     public let pageObjects: [PageObject]
     public let assetDataProvider: (UUID) -> Data?
     public let pageNumber: Int
+    public let isBookmarked: Bool
     public let isSelected: Bool
 
     @Environment(\.displayScale) private var displayScale
@@ -26,6 +27,7 @@ public struct PageThumbnailView: View {
         pageObjects: [PageObject] = [],
         assetDataProvider: @escaping (UUID) -> Data? = { _ in nil },
         pageNumber: Int,
+        isBookmarked: Bool = false,
         isSelected: Bool
     ) {
         self.paperType = paperType
@@ -33,6 +35,7 @@ public struct PageThumbnailView: View {
         self.pageObjects = pageObjects
         self.assetDataProvider = assetDataProvider
         self.pageNumber = pageNumber
+        self.isBookmarked = isBookmarked
         self.isSelected = isSelected
     }
 
@@ -83,6 +86,21 @@ public struct PageThumbnailView: View {
                     .resizable()
                     .interpolation(.high)
                     .scaledToFit()
+            }
+
+            if isBookmarked {
+                VStack {
+                    HStack {
+                        Spacer()
+                        Image(systemName: "bookmark.fill")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.orange)
+                            .padding(2.5)
+                            .background(.ultraThinMaterial, in: Circle())
+                            .padding(3)
+                    }
+                    Spacer()
+                }
             }
 
             Text("\(pageNumber)")

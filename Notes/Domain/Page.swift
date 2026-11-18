@@ -18,6 +18,8 @@ public struct Page: Identifiable, Codable, Equatable, Hashable, Sendable {
     public var paperTypeOverride: PaperType?
     /// Placed objects on this page (Basic Shapes, Images, Library/Stroke objects). Defaults to `[]` when decoding v1a files.
     public var objects: [PageObject]
+    /// Whether the page is bookmarked for quick access and filtering.
+    public var isBookmarked: Bool
     public let createdAt: Date
     public var updatedAt: Date
 
@@ -26,6 +28,7 @@ public struct Page: Identifiable, Codable, Equatable, Hashable, Sendable {
         case title
         case paperTypeOverride
         case objects
+        case isBookmarked
         case createdAt
         case updatedAt
     }
@@ -35,6 +38,7 @@ public struct Page: Identifiable, Codable, Equatable, Hashable, Sendable {
         title: String = "Untitled Page",
         paperTypeOverride: PaperType? = nil,
         objects: [PageObject] = [],
+        isBookmarked: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -42,6 +46,7 @@ public struct Page: Identifiable, Codable, Equatable, Hashable, Sendable {
         self.title = Self.sanitizedTitle(title)
         self.paperTypeOverride = paperTypeOverride
         self.objects = objects
+        self.isBookmarked = isBookmarked
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -53,6 +58,7 @@ public struct Page: Identifiable, Codable, Equatable, Hashable, Sendable {
         self.title = Self.sanitizedTitle(rawTitle)
         self.paperTypeOverride = try container.decodeIfPresent(PaperType.self, forKey: .paperTypeOverride)
         self.objects = try container.decodeIfPresent([PageObject].self, forKey: .objects) ?? []
+        self.isBookmarked = try container.decodeIfPresent(Bool.self, forKey: .isBookmarked) ?? false
         self.createdAt = try container.decode(Date.self, forKey: .createdAt)
         self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }
@@ -69,6 +75,16 @@ public struct Page: Identifiable, Codable, Equatable, Hashable, Sendable {
 
     public mutating func setPaperTypeOverride(_ overrideType: PaperType?, now: Date = Date()) {
         self.paperTypeOverride = overrideType
+        self.updatedAt = now
+    }
+
+    public mutating func toggleBookmark(now: Date = Date()) {
+        self.isBookmarked.toggle()
+        self.updatedAt = now
+    }
+
+    public mutating func setBookmarked(_ bookmarked: Bool, now: Date = Date()) {
+        self.isBookmarked = bookmarked
         self.updatedAt = now
     }
 

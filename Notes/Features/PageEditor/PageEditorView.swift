@@ -298,6 +298,19 @@ public struct PageEditorView: View {
                 .padding(.horizontal, 3)
                 .background(.ultraThinMaterial, in: Capsule())
                 .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.8))
+
+                Button {
+                    viewModel.toggleBookmark(id: page.id, in: section.id, notebookID: notebook.id)
+                } label: {
+                    Image(systemName: page.isBookmarked ? "bookmark.fill" : "bookmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(page.isBookmarked ? .orange : .primary)
+                        .frame(width: 30, height: 26)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .overlay(Circle().strokeBorder(page.isBookmarked ? Color.orange.opacity(0.3) : Color.primary.opacity(0.12), lineWidth: 0.8))
+                }
+                .buttonStyle(.plain)
+                .help(page.isBookmarked ? "Remove bookmark" : "Bookmark this page")
             }
 
             ToolbarItem(placement: .principal) {

@@ -94,4 +94,40 @@ struct NotebookHierarchyTests {
         let landscapeInitial = PageGeometry.defaultInitialZoomScale(forViewportSize: landscapeSize)
         #expect(landscapeInitial >= 1.15 && landscapeInitial <= landscapeFitWidth)
     }
+
+    @Test("Page bookmarks toggle correctly, preserve timestamps, and support backward-compatible decoding")
+    func pageBookmarkLifecycleAndBackwardCompatibility() throws {
+        let t0 = Date(timeIntervalSince1970: 1000)
+        let t1 = Date(timeIntervalSince1970: 2000)
+        var page = Page(title: "Research Paper", createdAt: t0, updatedAt: t0)
+        #expect(page.isBookmarked == false)
+
+        page.toggleBookmark(now: t1)
+        #expect(page.isBookmarked == true)
+        #expect(page.updatedAt == t1)
+
+        page.setBookmarked(false, now: t1.addingTimeInterval(10))
+        #expect(page.isBookmarked == false)
+
+        // Encoding round-trip with bookmark true
+        page.setBookmarked(true)
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(page)
+        let decoded = try JSONDecoder().decode(Page.self, from: data)
+        #expect(decoded.isBookmarked == true)
+        #expect(decoded.title == "Research Paper")
+
+        // Backward compatibility: decoding legacy v1 JSON without `isBookmarked` key
+        let legacyJSON = """
+        {
+            "id": "\(UUID().uuidString)",
+            "title": "Legacy Page Without Bookmark",
+            "createdAt": 1000,
+            "updatedAt": 1000
+        }
+        """.data(using: .utf8)!
+        let legacyPage = try JSONDecoder().decode(Page.self, from: legacyJSON)
+        #expect(legacyPage.isBookmarked == false)
+        #expect(legacyPage.title == "Legacy Page Without Bookmark")
+    }
 }
