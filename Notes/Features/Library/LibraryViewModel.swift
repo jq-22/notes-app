@@ -724,9 +724,7 @@ public final class LibraryViewModel {
         in sectionID: UUID? = nil,
         notebookID: UUID? = nil
     ) -> PageObject? {
-        let isDarkMode = UITraitCollection.current.userInterfaceStyle == .dark
-        let defaultColor: InkColorPreset = isDarkMode ? .white : .black
-        let resolvedColor = color ?? defaultColor
+        let resolvedColor = color ?? .black
         let object = PageObject.defaultTable(
             rows: rows,
             columns: columns,

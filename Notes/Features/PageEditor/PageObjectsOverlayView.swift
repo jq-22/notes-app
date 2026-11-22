@@ -38,6 +38,7 @@ public struct PageObjectsOverlayView: View {
     @State private var isTextColorPickerPresented: Bool = false
     @State private var isCardFillPickerPresented: Bool = false
     @State private var isCardBorderPickerPresented: Bool = false
+    @Environment(\.colorScheme) private var colorScheme
 
     private static let coordinateSpaceName = "A4PageCoordinateSpace"
     private static let rotateHandleLength: CGFloat = 28.0
@@ -559,7 +560,7 @@ public struct PageObjectsOverlayView: View {
                                 onCommitObjectsChange(before, after)
                             } label: {
                                 Circle()
-                                    .fill(preset.swiftUIColor)
+                                    .fill(preset.inkDisplayColor(for: colorScheme))
                                     .frame(width: 18, height: 18)
                                     .overlay(
                                         Circle()
@@ -570,6 +571,7 @@ public struct PageObjectsOverlayView: View {
                                     )
                             }
                             .buttonStyle(.plain)
+                            .help(preset.inkDisplayName(for: colorScheme))
                         }
 
                         Divider()
@@ -1281,7 +1283,11 @@ public struct PageObjectsOverlayView: View {
                     onCommitObjectsChange(before, after)
                 } label: {
                     HStack {
-                        Text(preset.displayName)
+                        Circle()
+                            .fill(preset.inkDisplayColor(for: colorScheme))
+                            .frame(width: 12, height: 12)
+                            .overlay(Circle().strokeBorder(Color.primary.opacity(0.25), lineWidth: 0.5))
+                        Text(preset.inkDisplayName(for: colorScheme))
                         if table.strokeColor == preset {
                             Spacer()
                             Image(systemName: "checkmark")
@@ -1292,7 +1298,7 @@ public struct PageObjectsOverlayView: View {
         } label: {
             HStack(spacing: 4) {
                 Circle()
-                    .fill(table.strokeColor.swiftUIColor)
+                    .fill(table.strokeColor.inkDisplayColor(for: colorScheme))
                     .frame(width: 14, height: 14)
                     .overlay(Circle().strokeBorder(Color.primary.opacity(0.25), lineWidth: 1.0))
                 Image(systemName: "square.dashed")
@@ -1333,7 +1339,11 @@ public struct PageObjectsOverlayView: View {
                         onCommitObjectsChange(before, after)
                     } label: {
                         HStack {
-                            Text(preset.displayName)
+                            Circle()
+                                .fill(preset.inkDisplayColor(for: colorScheme))
+                                .frame(width: 12, height: 12)
+                                .overlay(Circle().strokeBorder(Color.primary.opacity(0.25), lineWidth: 0.5))
+                            Text(preset.inkDisplayName(for: colorScheme))
                             if table.strokeColor == preset {
                                 Spacer()
                                 Image(systemName: "checkmark")
@@ -1610,6 +1620,7 @@ public struct PageObjectsOverlayView: View {
 public struct PageObjectContentView: View {
     public let object: PageObject
     public let assetDataProvider: (UUID) -> Data?
+    @Environment(\.colorScheme) private var colorScheme
 
     public init(object: PageObject, assetDataProvider: @escaping (UUID) -> Data?) {
         self.object = object
@@ -1623,7 +1634,7 @@ public struct PageObjectContentView: View {
                 let inset = Swift.max(strokeWidth * 0.5 + 1.0, 2.0)
                 let drawRect = CGRect(x: inset, y: inset, width: Swift.max(1, size.width - inset * 2), height: Swift.max(1, size.height - inset * 2))
                 let style = StrokeStyle(lineWidth: strokeWidth, lineCap: .round, lineJoin: .round)
-                let shading = GraphicsContext.Shading.color(strokeColor.swiftUIColor)
+                let shading = GraphicsContext.Shading.color(strokeColor.inkDisplayColor(for: colorScheme))
 
                 switch shapeKind {
                 case .rectangle:
