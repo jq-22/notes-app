@@ -156,6 +156,26 @@ public struct PageObjectsOverlayView: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: TextBoxLayout.cornerRadius, style: .continuous))
                 .frame(width: object.width, height: object.height)
+            } else if case .table(let table) = object.kind, isSelected && table.isTextMode {
+                TableView(
+                    table: table,
+                    columnWidths: object.tableColumnWidths(),
+                    rowHeights: object.tableRowHeights(),
+                    isSelected: true,
+                    onCellTextChange: { r, c, newText in
+                        let updated = object.withTableCellText(row: r, column: c, text: newText)
+                        onUpdateObjectLive(updated, false)
+                    },
+                    onCommitCellText: {
+                        let before = objects
+                        let updated = objects.first(where: { $0.id == object.id }) ?? object
+                        let after = before.map { $0.id == updated.id ? updated : $0 }
+                        if before != after {
+                            onCommitObjectsChange(before, after)
+                        }
+                    }
+                )
+                .frame(width: object.width, height: object.height)
             } else {
                 PageObjectContentView(object: object, assetDataProvider: assetDataProvider)
                     .frame(width: object.width, height: object.height)
@@ -241,8 +261,10 @@ public struct PageObjectsOverlayView: View {
                     .frame(width: object.width, height: object.height)
                     .allowsHitTesting(false)
 
-                // For .textBox, expose a 20pt perimeter border ring to move the card without blocking UITextView interior Scribble/selection
+                // For .textBox or .table in text mode, expose a 20pt perimeter border ring to move the card without blocking interior Scribble/selection
                 if case .textBox = object.kind {
+                    textBoxPerimeterMoveRing(for: object)
+                } else if case .table(let table) = object.kind, table.isTextMode {
                     textBoxPerimeterMoveRing(for: object)
                 }
 
@@ -270,6 +292,12 @@ public struct PageObjectsOverlayView: View {
                         .allowsHitTesting(false)
                 }
                 .offset(y: -(object.height * 0.5 + Self.rotateHandleLength * 0.5 + 5))
+
+                // Table mode & outline settings pop up menu button placed next to the rotate handle
+                if case .table(let table) = object.kind {
+                    tableModeAndSettingsMenu(for: object, table: table)
+                        .offset(x: 34, y: -(object.height * 0.5 + Self.rotateHandleLength * 0.5 + 5))
+                }
 
                 // Four corner dots to resize
                 cornerHandleDot(for: object, corner: .topLeft)
@@ -416,18 +444,24 @@ public struct PageObjectsOverlayView: View {
     // MARK: - Floating Action Bar for Selected Object
 
     public static func floatingToolbarGeometry(for object: PageObject) -> (center: CGPoint, size: CGSize) {
-        let isTextBox: Bool = {
+        let isTwoRow: Bool = {
             if case .textBox = object.kind { return true }
+            if case .table(let table) = object.kind, table.isTextMode { return true }
             return false
         }()
         let bounds = object.rotatedBoundingBox()
-        let horizontalMargin: CGFloat = isTextBox ? 200 : 150
+        let horizontalMargin: CGFloat = isTwoRow ? 225 : 190
         let clampedX = Swift.min(Swift.max(object.center.x, horizontalMargin), PageGeometry.a4Width - horizontalMargin)
-        let preferredBottomY = bounds.maxY + (isTextBox ? 44 : 26)
-        let toolbarY = (preferredBottomY < PageGeometry.a4Height - (isTextBox ? 52 : 36))
+        let preferredBottomY = bounds.maxY + (isTwoRow ? 44 : 26)
+        let toolbarY = (preferredBottomY < PageGeometry.a4Height - (isTwoRow ? 52 : 36))
             ? preferredBottomY
-            : Swift.max(isTextBox ? 52 : 36, bounds.minY - (isTextBox ? 64 : 46))
-        let size = isTextBox ? CGSize(width: 410, height: 94) : CGSize(width: 330, height: 56)
+            : Swift.max(isTwoRow ? 52 : 36, bounds.minY - (isTwoRow ? 64 : 46))
+        let width: CGFloat = {
+            if case .textBox = object.kind { return 450 }
+            if case .table(let table) = object.kind { return table.isTextMode ? 460 : 390 }
+            return 330
+        }()
+        let size = CGSize(width: width, height: isTwoRow ? 94 : 56)
         return (CGPoint(x: clampedX, y: toolbarY), size)
     }
 
@@ -458,104 +492,48 @@ public struct PageObjectsOverlayView: View {
                         commonObjectActionButtons(for: object)
                     }
                 }
-            } else {
-                HStack(spacing: 8) {
-                    // Table-specific row/col and header controls
-                    if case .table(let rows, let cols, _, _, _, let header) = object.kind {
-                        Button {
-                            let before = objects
-                            let updated = object.withToggledTableHeader()
-                            onUpdateObjectLive(updated, true)
-                            let after = before.map { $0.id == updated.id ? updated : $0 }
-                            onCommitObjectsChange(before, after)
-                        } label: {
-                            HStack(spacing: 3) {
-                                Image(systemName: header ? "tablecells.badge.ellipsis" : "tablecells")
-                                    .font(.system(size: 13, weight: .semibold))
-                                Text(header ? "Header: On" : "Header: Off")
-                                    .font(.system(size: 11, weight: .medium))
-                            }
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 4)
-                            .background(header ? Color.accentColor.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
-                        }
-                        .buttonStyle(.plain)
-                        .help("Toggle Header Row")
-
-                        HStack(spacing: 2) {
-                            Button {
-                                let before = objects
-                                let updated = object.withAddedTableRow()
-                                onUpdateObjectLive(updated, true)
-                                let after = before.map { $0.id == updated.id ? updated : $0 }
-                                onCommitObjectsChange(before, after)
-                            } label: {
-                                Text("+ Row")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 4)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Add Row")
-
-                            if rows > 1 {
-                                Button {
-                                    let before = objects
-                                    let updated = object.withRemovedTableRow()
-                                    onUpdateObjectLive(updated, true)
-                                    let after = before.map { $0.id == updated.id ? updated : $0 }
-                                    onCommitObjectsChange(before, after)
-                                } label: {
-                                    Text("- Row")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 4)
-                                }
-                                .buttonStyle(.plain)
-                                .help("Remove Row")
-                            }
-                        }
-                        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
-
-                        HStack(spacing: 2) {
-                            Button {
-                                let before = objects
-                                let updated = object.withAddedTableColumn()
-                                onUpdateObjectLive(updated, true)
-                                let after = before.map { $0.id == updated.id ? updated : $0 }
-                                onCommitObjectsChange(before, after)
-                            } label: {
-                                Text("+ Col")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 4)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Add Column")
-
-                            if cols > 1 {
-                                Button {
-                                    let before = objects
-                                    let updated = object.withRemovedTableColumn()
-                                    onUpdateObjectLive(updated, true)
-                                    let after = before.map { $0.id == updated.id ? updated : $0 }
-                                    onCommitObjectsChange(before, after)
-                                } label: {
-                                    Text("- Col")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 4)
-                                }
-                                .buttonStyle(.plain)
-                                .help("Remove Column")
-                            }
-                        }
-                        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+            } else if case .table(let table) = object.kind {
+                if table.isTextMode {
+                    VStack(spacing: 6) {
+                        tableTextStyleControlsRow(for: object, table: table)
 
                         Divider()
-                            .frame(height: 18)
-                    }
 
+                        HStack(spacing: 8) {
+                            tableModeToggleChip(for: object, table: table)
+
+                            Divider().frame(height: 18)
+
+                            tableStructureControls(for: object, table: table)
+
+                            Divider().frame(height: 18)
+
+                            tableOutlineColorMenu(for: object, table: table)
+
+                            Divider().frame(height: 18)
+
+                            commonObjectActionButtons(for: object)
+                        }
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        tableModeToggleChip(for: object, table: table)
+
+                        Divider().frame(height: 18)
+
+                        tableStructureControls(for: object, table: table)
+
+                        Divider().frame(height: 18)
+
+                        tableOutlineColorMenu(for: object, table: table)
+
+                        Divider().frame(height: 18)
+
+                        commonObjectActionButtons(for: object)
+                    }
+                }
+            } else {
+                HStack(spacing: 8) {
                     // Page link jump button
                     if case .pageLink(let targetPageID, let targetSecID, let targetNbID, _) = object.kind {
                         Button {
@@ -654,6 +632,39 @@ public struct PageObjectsOverlayView: View {
             .padding(.horizontal, 3)
             .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
 
+            // Font Family / Design Menu
+            Menu {
+                ForEach(TextBoxFontDesign.allCases) { design in
+                    Button {
+                        var next = style
+                        next.fontDesign = design
+                        commitTextBoxStyleChange(next, for: object)
+                    } label: {
+                        HStack {
+                            Label(design.displayName, systemImage: design.systemImageName)
+                            if style.fontDesign == design {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "textformat")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(style.fontDesign.displayName)
+                        .font(.system(size: 11, weight: .semibold))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .help("Font Family")
+
             // Bold & Italic toggles
             HStack(spacing: 2) {
                 Button {
@@ -705,6 +716,32 @@ public struct PageObjectsOverlayView: View {
                     .help("Align \(alignment.displayName)")
                 }
             }
+
+            // Bullet list toggle
+            Button {
+                if case .textBox(let currentText, _) = object.kind {
+                    let newText = TextBoxBulletHelper.toggleBullets(in: currentText)
+                    let before = objects
+                    let updated = object.withText(newText)
+                    onUpdateObjectLive(updated, false)
+                    let after = before.map { $0.id == updated.id ? updated : $0 }
+                    onCommitObjectsChange(before, after)
+                }
+            } label: {
+                let isBulleted: Bool = {
+                    if case .textBox(let currentText, _) = object.kind {
+                        return TextBoxBulletHelper.isBulleted(currentText)
+                    }
+                    return false
+                }()
+                Image(systemName: "list.bullet")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(isBulleted ? Color.accentColor : Color.primary)
+                    .frame(width: 25, height: 25)
+                    .background(isBulleted ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .help("Bullet List")
 
             Divider().frame(height: 18)
 
@@ -919,6 +956,434 @@ public struct PageObjectsOverlayView: View {
         onCommitObjectsChange(before, after)
     }
 
+    private func commitTableTextStyleChange(_ newStyle: TextBoxStyle, for object: PageObject) {
+        let before = objects
+        let updated = object.withTableTextStyle(newStyle)
+        onUpdateObjectLive(updated, true)
+        let after = before.map { $0.id == updated.id ? updated : $0 }
+        onCommitObjectsChange(before, after)
+    }
+
+    @ViewBuilder
+    private func tableTextStyleControlsRow(for object: PageObject, table: TableProperties) -> some View {
+        let style = table.textStyle
+        HStack(spacing: 8) {
+            // Font size stepper (- / size / +)
+            HStack(spacing: 2) {
+                Button {
+                    var next = style
+                    next.fontSize = TextBoxStyle.clampedFontSize(style.fontSize - 2)
+                    commitTableTextStyleChange(next, for: object)
+                } label: {
+                    Image(systemName: "minus")
+                        .font(.system(size: 11, weight: .bold))
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .disabled(style.fontSize <= TextBoxStyle.fontSizeRange.lowerBound)
+                .help("Decrease Font Size")
+
+                Text("\(Int(style.fontSize.rounded()))")
+                    .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                    .frame(minWidth: 22)
+
+                Button {
+                    var next = style
+                    next.fontSize = TextBoxStyle.clampedFontSize(style.fontSize + 2)
+                    commitTableTextStyleChange(next, for: object)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .bold))
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .disabled(style.fontSize >= TextBoxStyle.fontSizeRange.upperBound)
+                .help("Increase Font Size")
+            }
+            .padding(.horizontal, 3)
+            .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+
+            // Font Family / Design Menu
+            Menu {
+                ForEach(TextBoxFontDesign.allCases) { design in
+                    Button {
+                        var next = style
+                        next.fontDesign = design
+                        commitTableTextStyleChange(next, for: object)
+                    } label: {
+                        HStack {
+                            Label(design.displayName, systemImage: design.systemImageName)
+                            if style.fontDesign == design {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "textformat")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(style.fontDesign.displayName)
+                        .font(.system(size: 11, weight: .semibold))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .help("Font Family")
+
+            // Bold & Italic toggles
+            HStack(spacing: 2) {
+                Button {
+                    var next = style
+                    next.isBold.toggle()
+                    commitTableTextStyleChange(next, for: object)
+                } label: {
+                    Image(systemName: "bold")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(style.isBold ? Color.accentColor : Color.primary)
+                        .frame(width: 26, height: 26)
+                        .background(style.isBold ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .help("Bold")
+
+                Button {
+                    var next = style
+                    next.isItalic.toggle()
+                    commitTableTextStyleChange(next, for: object)
+                } label: {
+                    Image(systemName: "italic")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(style.isItalic ? Color.accentColor : Color.primary)
+                        .frame(width: 26, height: 26)
+                        .background(style.isItalic ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .help("Italic")
+            }
+
+            Divider().frame(height: 18)
+
+            // Alignment controls
+            HStack(spacing: 2) {
+                ForEach(TextBoxAlignment.allCases) { alignment in
+                    Button {
+                        var next = style
+                        next.alignment = alignment
+                        commitTableTextStyleChange(next, for: object)
+                    } label: {
+                        Image(systemName: alignment.systemImageName)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(style.alignment == alignment ? Color.accentColor : Color.primary)
+                            .frame(width: 25, height: 25)
+                            .background(style.alignment == alignment ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Align \(alignment.displayName)")
+                }
+            }
+
+            // Bullet list toggle for table cells
+            Button {
+                var newCells = table.cellTexts
+                let nonBlank = newCells.values.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                let allBulleted = !nonBlank.isEmpty && nonBlank.allSatisfy { TextBoxBulletHelper.isBulleted($0) }
+                for (key, val) in newCells {
+                    newCells[key] = TextBoxBulletHelper.toggleBullets(in: val)
+                }
+                let before = objects
+                var updatedTable = table
+                updatedTable.cellTexts = newCells
+                var updated = object
+                updated.kind = .table(updatedTable)
+                onUpdateObjectLive(updated, true)
+                let after = before.map { $0.id == updated.id ? updated : $0 }
+                onCommitObjectsChange(before, after)
+            } label: {
+                let isBulleted: Bool = {
+                    let nonBlank = table.cellTexts.values.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                    return !nonBlank.isEmpty && nonBlank.allSatisfy { TextBoxBulletHelper.isBulleted($0) }
+                }()
+                Image(systemName: "list.bullet")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(isBulleted ? Color.accentColor : Color.primary)
+                    .frame(width: 25, height: 25)
+                    .background(isBulleted ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .help("Bullet List")
+
+            Divider().frame(height: 18)
+
+            // Text Color picker popover
+            Button {
+                isCardFillPickerPresented = false
+                isCardBorderPickerPresented = false
+                isTextColorPickerPresented.toggle()
+            } label: {
+                VStack(spacing: 1) {
+                    Text("A")
+                        .font(.system(size: 12, weight: .bold))
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(style.textColor.swiftUIColor)
+                        .frame(width: 14, height: 3)
+                        .overlay(RoundedRectangle(cornerRadius: 1).stroke(Color.primary.opacity(0.25), lineWidth: 0.5))
+                }
+                .frame(width: 26, height: 26)
+            }
+            .buttonStyle(.plain)
+            .help("Cell Text Colour")
+            .popover(isPresented: $isTextColorPickerPresented, arrowEdge: .bottom) {
+                textBoxColorPopover(title: "Text Colour", selected: style.textColor, allowNone: false) { chosen in
+                    if let chosen {
+                        var next = style
+                        next.textColor = chosen
+                        commitTableTextStyleChange(next, for: object)
+                    }
+                    isTextColorPickerPresented = false
+                }
+            }
+        }
+    }
+
+    private func tableModeToggleChip(for object: PageObject, table: TableProperties) -> some View {
+        Button {
+            let before = objects
+            let updated = object.withToggledTableTextMode()
+            onUpdateObjectLive(updated, true)
+            let after = before.map { $0.id == updated.id ? updated : $0 }
+            onCommitObjectsChange(before, after)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: table.isTextMode ? "character.cursor.ibeam" : "pencil.tip.crop.inline")
+                    .font(.system(size: 12, weight: .bold))
+                Text(table.isTextMode ? "Text Mode" : "Draw Mode")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(
+                table.isTextMode ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.12),
+                in: RoundedRectangle(cornerRadius: 6)
+            )
+            .foregroundStyle(table.isTextMode ? Color.accentColor : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .help(table.isTextMode ? "Switch to Draw Mode" : "Switch to Text Mode")
+    }
+
+    @ViewBuilder
+    private func tableStructureControls(for object: PageObject, table: TableProperties) -> some View {
+        Button {
+            let before = objects
+            let updated = object.withToggledTableHeader()
+            onUpdateObjectLive(updated, true)
+            let after = before.map { $0.id == updated.id ? updated : $0 }
+            onCommitObjectsChange(before, after)
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: table.hasHeaderRow ? "tablecells.badge.ellipsis" : "tablecells")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(table.hasHeaderRow ? "Header: On" : "Header: Off")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(table.hasHeaderRow ? Color.accentColor.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .help("Toggle Header Row")
+
+        HStack(spacing: 2) {
+            Button {
+                let before = objects
+                let updated = object.withAddedTableRow()
+                onUpdateObjectLive(updated, true)
+                let after = before.map { $0.id == updated.id ? updated : $0 }
+                onCommitObjectsChange(before, after)
+            } label: {
+                Text("+ Row")
+                    .font(.system(size: 11, weight: .semibold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.plain)
+            .help("Add Row")
+
+            if table.rowCount > 1 {
+                Button {
+                    let before = objects
+                    let updated = object.withRemovedTableRow()
+                    onUpdateObjectLive(updated, true)
+                    let after = before.map { $0.id == updated.id ? updated : $0 }
+                    onCommitObjectsChange(before, after)
+                } label: {
+                    Text("- Row")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+                .help("Remove Row")
+            }
+        }
+        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+
+        HStack(spacing: 2) {
+            Button {
+                let before = objects
+                let updated = object.withAddedTableColumn()
+                onUpdateObjectLive(updated, true)
+                let after = before.map { $0.id == updated.id ? updated : $0 }
+                onCommitObjectsChange(before, after)
+            } label: {
+                Text("+ Col")
+                    .font(.system(size: 11, weight: .semibold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.plain)
+            .help("Add Column")
+
+            if table.columnCount > 1 {
+                Button {
+                    let before = objects
+                    let updated = object.withRemovedTableColumn()
+                    onUpdateObjectLive(updated, true)
+                    let after = before.map { $0.id == updated.id ? updated : $0 }
+                    onCommitObjectsChange(before, after)
+                } label: {
+                    Text("- Col")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+                .help("Remove Column")
+            }
+        }
+        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func tableOutlineColorMenu(for object: PageObject, table: TableProperties) -> some View {
+        Menu {
+            ForEach(InkColorPreset.allCases) { preset in
+                Button {
+                    let before = objects
+                    let updated = object.withTableStrokeColor(preset)
+                    onUpdateObjectLive(updated, true)
+                    let after = before.map { $0.id == updated.id ? updated : $0 }
+                    onCommitObjectsChange(before, after)
+                } label: {
+                    HStack {
+                        Text(preset.displayName)
+                        if table.strokeColor == preset {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(table.strokeColor.swiftUIColor)
+                    .frame(width: 14, height: 14)
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.25), lineWidth: 1.0))
+                Image(systemName: "square.dashed")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .help("Table Outline Colour")
+    }
+
+    private func tableModeAndSettingsMenu(for object: PageObject, table: TableProperties) -> some View {
+        Menu {
+            Section("Table Mode") {
+                Button {
+                    let before = objects
+                    let updated = object.withToggledTableTextMode()
+                    onUpdateObjectLive(updated, true)
+                    let after = before.map { $0.id == updated.id ? updated : $0 }
+                    onCommitObjectsChange(before, after)
+                } label: {
+                    Label(
+                        table.isTextMode ? "Switch to Draw Mode" : "Switch to Text Mode",
+                        systemImage: table.isTextMode ? "pencil.tip.crop.inline" : "character.cursor.ibeam"
+                    )
+                }
+            }
+
+            Section("Table Outline Colour") {
+                ForEach(InkColorPreset.allCases) { preset in
+                    Button {
+                        let before = objects
+                        let updated = object.withTableStrokeColor(preset)
+                        onUpdateObjectLive(updated, true)
+                        let after = before.map { $0.id == updated.id ? updated : $0 }
+                        onCommitObjectsChange(before, after)
+                    } label: {
+                        HStack {
+                            Text(preset.displayName)
+                            if table.strokeColor == preset {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
+
+            Section("Table Grid") {
+                Button {
+                    let before = objects
+                    let updated = object.withToggledTableHeader()
+                    onUpdateObjectLive(updated, true)
+                    let after = before.map { $0.id == updated.id ? updated : $0 }
+                    onCommitObjectsChange(before, after)
+                } label: {
+                    Label(table.hasHeaderRow ? "Header Row: On" : "Header Row: Off", systemImage: "tablecells.badge.ellipsis")
+                }
+
+                Button {
+                    let before = objects
+                    let updated = object.withToggledTableStriping()
+                    onUpdateObjectLive(updated, true)
+                    let after = before.map { $0.id == updated.id ? updated : $0 }
+                    onCommitObjectsChange(before, after)
+                } label: {
+                    Label(table.isStriped ? "Striped Rows: On" : "Striped Rows: Off", systemImage: "checklist.unchecked")
+                }
+            }
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 22, height: 22)
+                    .shadow(color: .black.opacity(0.18), radius: 2, x: 0, y: 1)
+                Circle()
+                    .strokeBorder(Color.accentColor, lineWidth: 1.8)
+                    .frame(width: 22, height: 22)
+                Image(systemName: table.isTextMode ? "character.cursor.ibeam" : "ellipsis")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
+            }
+            .frame(width: Self.cornerHitTargetSize, height: Self.cornerHitTargetSize)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Table Mode & Settings")
+    }
+
     private func canRecolor(_ object: PageObject) -> Bool {
         switch object.kind {
         case .basicShape, .strokeGroup, .table:
@@ -934,8 +1399,8 @@ public struct PageObjectsOverlayView: View {
             return color == preset
         case .strokeGroup(_, _, _, let tint):
             return tint == preset
-        case .table(_, _, _, _, let color, _):
-            return color == preset
+        case .table(let table):
+            return table.strokeColor == preset
         case .textBox(_, let style):
             return style.textColor == preset
         case .image, .pageLink:
@@ -1235,15 +1700,16 @@ public struct PageObjectContentView: View {
                 EmptyView()
             }
 
-        case .table(let rowCount, let colCount, let colFracs, let rowFracs, let strokeColor, let hasHeaderRow):
+        case .table(let table):
             TableView(
-                rowCount: rowCount,
-                columnCount: colCount,
-                columnWidthFractions: colFracs,
-                rowHeightFractions: rowFracs,
-                strokeColor: strokeColor,
-                hasHeaderRow: hasHeaderRow
+                table: table,
+                columnWidths: object.tableColumnWidths(),
+                rowHeights: object.tableRowHeights(),
+                isSelected: false,
+                onCellTextChange: nil,
+                onCommitCellText: nil
             )
+            .frame(width: object.width, height: object.height)
 
         case .pageLink(let targetPageID, let targetSecID, let targetNbID, let fallbackTitle):
             PageLinkBadgeView(
@@ -1288,64 +1754,194 @@ public struct PageObjectContentView: View {
     }
 }
 
-// MARK: - Table View Component (Grid Sits Under Ink Layer)
+// MARK: - Table Cell Inline Editor (UIKit UITextView + Scribble Interaction)
 
-public struct TableView: View {
-    public let rowCount: Int
-    public let columnCount: Int
-    public let columnWidthFractions: [CGFloat]?
-    public let rowHeightFractions: [CGFloat]?
-    public let strokeColor: InkColorPreset
-    public let hasHeaderRow: Bool
+public struct TableCellInlineEditor: UIViewRepresentable {
+    public let text: String
+    public let style: TextBoxStyle
+    public let onTextChange: (String) -> Void
+    public let onEndEditing: () -> Void
 
     public init(
-        rowCount: Int,
-        columnCount: Int,
-        columnWidthFractions: [CGFloat]?,
-        rowHeightFractions: [CGFloat]?,
-        strokeColor: InkColorPreset,
-        hasHeaderRow: Bool
+        text: String,
+        style: TextBoxStyle,
+        onTextChange: @escaping (String) -> Void,
+        onEndEditing: @escaping () -> Void
     ) {
-        self.rowCount = rowCount
-        self.columnCount = columnCount
-        self.columnWidthFractions = columnWidthFractions
-        self.rowHeightFractions = rowHeightFractions
-        self.strokeColor = strokeColor
-        self.hasHeaderRow = hasHeaderRow
+        self.text = text
+        self.style = style
+        self.onTextChange = onTextChange
+        self.onEndEditing = onEndEditing
+    }
+
+    public func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    public func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.backgroundColor = .clear
+        textView.isOpaque = false
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.isScrollEnabled = false
+        textView.clipsToBounds = true
+        textView.showsVerticalScrollIndicator = false
+        textView.showsHorizontalScrollIndicator = false
+        textView.textContainerInset = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
+        textView.textContainer.lineFragmentPadding = 0
+        textView.textContainer.lineBreakMode = .byWordWrapping
+        textView.delegate = context.coordinator
+
+        let scribble = UIScribbleInteraction(delegate: context.coordinator)
+        textView.addInteraction(scribble)
+
+        textView.text = text
+        textView.font = style.resolvedUIFont()
+        textView.textColor = style.resolvedCanvasUITextColor()
+        textView.textAlignment = style.alignment.nsTextAlignment
+        return textView
+    }
+
+    public func updateUIView(_ textView: UITextView, context: Context) {
+        context.coordinator.parent = self
+        if textView.markedTextRange == nil && textView.text != text {
+            textView.text = text
+        }
+        let targetFont = style.resolvedUIFont()
+        if textView.font != targetFont {
+            textView.font = targetFont
+        }
+        let targetColor = style.resolvedCanvasUITextColor()
+        if textView.textColor != targetColor {
+            textView.textColor = targetColor
+        }
+        let targetAlign = style.alignment.nsTextAlignment
+        if textView.textAlignment != targetAlign {
+            textView.textAlignment = targetAlign
+        }
+    }
+
+    public final class Coordinator: NSObject, UITextViewDelegate, UIScribbleInteractionDelegate {
+        var parent: TableCellInlineEditor
+
+        init(_ parent: TableCellInlineEditor) {
+            self.parent = parent
+        }
+
+        public func textViewDidChange(_ textView: UITextView) {
+            parent.onTextChange(textView.text ?? "")
+        }
+
+        public func textViewDidEndEditing(_ textView: UITextView) {
+            parent.onEndEditing()
+        }
+
+        public func scribbleInteraction(_ interaction: UIScribbleInteraction, shouldBeginAt location: CGPoint) -> Bool {
+            true
+        }
+
+        public func scribbleInteractionShouldDelayFocus(_ interaction: UIScribbleInteraction) -> Bool {
+            false
+        }
+    }
+}
+
+// MARK: - Table View Component (Grid Sits Under Ink Layer; Supports Draw & Text Modes)
+
+public struct TableView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    public let table: TableProperties
+    public let columnWidths: [CGFloat]
+    public let rowHeights: [CGFloat]
+    public let isSelected: Bool
+    public let onCellTextChange: ((Int, Int, String) -> Void)?
+    public let onCommitCellText: (() -> Void)?
+
+    public init(
+        table: TableProperties,
+        columnWidths: [CGFloat],
+        rowHeights: [CGFloat],
+        isSelected: Bool = false,
+        onCellTextChange: ((Int, Int, String) -> Void)? = nil,
+        onCommitCellText: (() -> Void)? = nil
+    ) {
+        self.table = table
+        self.columnWidths = columnWidths
+        self.rowHeights = rowHeights
+        self.isSelected = isSelected
+        self.onCellTextChange = onCellTextChange
+        self.onCommitCellText = onCommitCellText
     }
 
     public var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
-            let colWidths: [CGFloat] = {
-                if let fractions = columnWidthFractions, fractions.count == columnCount {
-                    let sum = fractions.reduce(0, +)
-                    return fractions.map { ($0 / sum) * w }
-                }
-                let equalW = w / CGFloat(Swift.max(1, columnCount))
-                return Array(repeating: equalW, count: columnCount)
-            }()
-            let rowHeights: [CGFloat] = {
-                if let fractions = rowHeightFractions, fractions.count == rowCount {
-                    let sum = fractions.reduce(0, +)
-                    return fractions.map { ($0 / sum) * h }
-                }
-                let equalH = h / CGFloat(Swift.max(1, rowCount))
-                return Array(repeating: equalH, count: rowCount)
-            }()
+            let colWidths = columnWidths.isEmpty ? [w] : columnWidths
+            let rowHeights = rowHeights.isEmpty ? [h] : rowHeights
+            let gridColor = table.strokeColor.inkDisplayColor(for: colorScheme)
+            let isEditing = table.isTextMode && isSelected
 
             ZStack(alignment: .topLeading) {
-                // Header row background highlight if enabled
-                if hasHeaderRow, let firstH = rowHeights.first {
-                    Rectangle()
-                        .fill(strokeColor.swiftUIColor.opacity(0.09))
-                        .frame(width: w, height: firstH)
+                // Table content & cells arranged in crisp rows and columns
+                VStack(spacing: 0) {
+                    ForEach(0..<rowHeights.count, id: \.self) { r in
+                        let rH = rowHeights[r]
+                        let isHeader = (r == 0 && table.hasHeaderRow)
+                        let isStripe = (table.isStriped && r % 2 == 1)
+                        let rowBg: Color = {
+                            if isHeader { return gridColor.opacity(0.12) }
+                            if isStripe { return gridColor.opacity(0.06) }
+                            return Color.clear
+                        }()
+
+                        HStack(spacing: 0) {
+                            ForEach(0..<colWidths.count, id: \.self) { c in
+                                let cW = colWidths[c]
+                                let key = "\(r),\(c)"
+                                let cellText = table.cellTexts[key] ?? ""
+
+                                ZStack {
+                                    if isEditing {
+                                        TableCellInlineEditor(
+                                            text: cellText,
+                                            style: table.textStyle,
+                                            onTextChange: { newText in
+                                                onCellTextChange?(r, c, newText)
+                                            },
+                                            onEndEditing: {
+                                                onCommitCellText?()
+                                            }
+                                        )
+                                        .frame(width: Swift.max(1, cW - 8), height: Swift.max(1, rH - 6))
+                                        .clipped()
+                                    } else if !cellText.isEmpty {
+                                        Text(cellText)
+                                            .font(table.textStyle.resolvedSwiftUIFont())
+                                            .foregroundStyle(table.textStyle.resolvedCanvasTextColor())
+                                            .multilineTextAlignment(table.textStyle.alignment.swiftUITextAlignment)
+                                            .frame(
+                                                width: Swift.max(1, cW - 8),
+                                                height: Swift.max(1, rH - 6),
+                                                alignment: table.textStyle.alignment.swiftUIFrameAlignment
+                                            )
+                                            .clipped()
+                                            .allowsHitTesting(false)
+                                    }
+                                }
+                                .frame(width: cW, height: rH)
+                                .clipped()
+                            }
+                        }
+                        .frame(width: w, height: rH)
+                        .background(rowBg)
+                    }
                 }
 
-                // Grid paths
+                // Grid lines overlay drawn in Canvas
                 Canvas { context, size in
-                    let color = strokeColor.swiftUIColor
+                    let color = gridColor
                     let outerStyle = StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round)
                     let innerStyle = StrokeStyle(lineWidth: 1.0, lineCap: .round, lineJoin: .round)
 
@@ -1373,11 +1969,12 @@ public struct TableView: View {
                         var hLine = Path()
                         hLine.move(to: CGPoint(x: 0, y: currentY))
                         hLine.addLine(to: CGPoint(x: size.width, y: currentY))
-                        let isHeaderDivider = (rowIdx == 0 && hasHeaderRow)
+                        let isHeaderDivider = (rowIdx == 0 && table.hasHeaderRow)
                         let rowStyle = isHeaderDivider ? outerStyle : innerStyle
                         context.stroke(hLine, with: .color(isHeaderDivider ? color : color.opacity(0.80)), style: rowStyle)
                     }
                 }
+                .allowsHitTesting(false)
             }
             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         }

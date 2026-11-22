@@ -396,11 +396,12 @@ struct LibraryViewModelTests {
         let tableObj = try #require(vm.insertTable(rows: 4, columns: 3, color: .blue, hasHeaderRow: true, on: page1ID, in: sec1ID, notebookID: nb1.id))
         #expect(vm.selectedPage?.objects.count == 1)
         #expect(vm.selectedObjectID == tableObj.id)
-        if case .table(let rows, let cols, _, _, let color, let header) = tableObj.kind {
-            #expect(rows == 4)
-            #expect(cols == 3)
-            #expect(color == .blue)
-            #expect(header == true)
+        if case .table(let tableProps) = tableObj.kind {
+            #expect(tableProps.rowCount == 4)
+            #expect(tableProps.columnCount == 3)
+            #expect(tableProps.strokeColor == .blue)
+            #expect(tableProps.hasHeaderRow == true)
+            #expect(tableProps.isTextMode == false) // Auto-selected to Draw Mode
         } else {
             Issue.record("Expected table kind")
         }

@@ -119,51 +119,52 @@ struct PageObjectTests {
     func tableObjectOperationsAndGridMath() {
         let table = PageObject.defaultTable(rows: 4, columns: 3, color: .black, hasHeaderRow: true)
         #expect(table.width == 460)
-        if case .table(let rows, let cols, _, _, let color, let header) = table.kind {
-            #expect(rows == 4)
-            #expect(cols == 3)
-            #expect(color == .black)
-            #expect(header == true)
+        if case .table(let props) = table.kind {
+            #expect(props.rowCount == 4)
+            #expect(props.columnCount == 3)
+            #expect(props.strokeColor == .black)
+            #expect(props.hasHeaderRow == true)
+            #expect(props.isTextMode == false) // Auto-selected to Draw Mode
         } else {
             Issue.record("Expected table kind")
         }
 
         // Add row
         let withRow = table.withAddedTableRow()
-        if case .table(let rows, _, _, _, _, _) = withRow.kind {
-            #expect(rows == 5)
+        if case .table(let props) = withRow.kind {
+            #expect(props.rowCount == 5)
             #expect(withRow.height > table.height)
         }
 
         // Remove row
         let withoutRow = withRow.withRemovedTableRow()
-        if case .table(let rows, _, _, _, _, _) = withoutRow.kind {
-            #expect(rows == 4)
+        if case .table(let props) = withoutRow.kind {
+            #expect(props.rowCount == 4)
         }
 
         // Add column
         let withCol = table.withAddedTableColumn()
-        if case .table(_, let cols, _, _, _, _) = withCol.kind {
-            #expect(cols == 4)
+        if case .table(let props) = withCol.kind {
+            #expect(props.columnCount == 4)
             #expect(withCol.width > table.width)
         }
 
         // Remove column
         let withoutCol = withCol.withRemovedTableColumn()
-        if case .table(_, let cols, _, _, _, _) = withoutCol.kind {
-            #expect(cols == 3)
+        if case .table(let props) = withoutCol.kind {
+            #expect(props.columnCount == 3)
         }
 
         // Toggle header
         let toggledHeader = table.withToggledTableHeader()
-        if case .table(_, _, _, _, _, let header) = toggledHeader.kind {
-            #expect(header == false)
+        if case .table(let props) = toggledHeader.kind {
+            #expect(props.hasHeaderRow == false)
         }
 
         // Recolour
         let blueTable = table.recolored(to: .blue)
-        if case .table(_, _, _, _, let color, _) = blueTable.kind {
-            #expect(color == .blue)
+        if case .table(let props) = blueTable.kind {
+            #expect(props.strokeColor == .blue)
         }
 
         // Adjust column divider: expand column 0 by 30pt, shrinking column 1 by 30pt
@@ -358,5 +359,99 @@ struct PageObjectTests {
         #expect(decodedObj.id == objectID)
         #expect(decodedObj.width >= PageObject.minimumDimension)
         #expect(decodedObj.height >= PageObject.minimumDimension)
+    }
+
+    @Test("Table text mode toggle, cell text storage, and striping toggle")
+    func tableTextModeAndCellTexts() {
+        var table = PageObject.defaultTable(rows: 3, columns: 3, color: .black, hasHeaderRow: true)
+        guard var props = table.tableProperties else {
+            Issue.record("Expected table properties")
+            return
+        }
+        #expect(props.isTextMode == false) // Default auto-selected to Draw mode
+
+        // Toggle to text mode
+        let textModeTable = table.withToggledTableTextMode()
+        #expect(textModeTable.tableProperties?.isTextMode == true)
+
+        // Set cell text at (0, 0) and (1, 2)
+        let withText = textModeTable
+            .withTableCellText(row: 0, column: 0, text: "Header Cell")
+            .withTableCellText(row: 1, column: 2, text: "Value 42")
+
+        #expect(withText.tableProperties?.cellTexts["0,0"] == "Header Cell")
+        #expect(withText.tableProperties?.cellTexts["1,2"] == "Value 42")
+
+        // Striping toggle
+        let striped = withText.withToggledTableStriping()
+        #expect(striped.tableProperties?.isStriped == true)
+
+        // Table text styling
+        let styled = striped.withTableTextStyle(TextBoxStyle(fontSize: 18, fontDesign: .serif, isBold: true))
+        #expect(styled.tableProperties?.textStyle.fontSize == 18)
+        #expect(styled.tableProperties?.textStyle.fontDesign == .serif)
+        #expect(styled.tableProperties?.textStyle.isBold == true)
+    }
+
+    @Test("TextBoxFontDesign and TextBoxBulletHelper functions")
+    func textBoxFontDesignAndBulletHelpers() {
+        #expect(TextBoxFontDesign.allCases.count == 4)
+        #expect(TextBoxFontDesign.standard.displayName == "Default")
+        #expect(TextBoxFontDesign.serif.displayName == "Serif")
+        #expect(TextBoxFontDesign.monospaced.displayName == "Mono")
+        #expect(TextBoxFontDesign.rounded.displayName == "Rounded")
+
+        // Bullet list helper
+        let plain = "First line\nSecond line"
+        #expect(!TextBoxBulletHelper.isBulleted(plain))
+
+        let bulleted = TextBoxBulletHelper.toggleBullets(in: plain)
+        #expect(TextBoxBulletHelper.isBulleted(bulleted))
+        #expect(bulleted.contains("• First line"))
+        #expect(bulleted.contains("• Second line"))
+
+        let toggledBack = TextBoxBulletHelper.toggleBullets(in: bulleted)
+        #expect(!TextBoxBulletHelper.isBulleted(toggledBack))
+        #expect(!toggledBack.contains("• "))
+    }
+
+    @Test("Backward-compatible decoding of legacy table JSON with _0..._5 positional keys")
+    func legacyTableJsonDecodingBackwardCompatibility() throws {
+        let objectID = UUID()
+        let legacyTableJSON = """
+        {
+            "id": "\(objectID.uuidString)",
+            "x": 67.5,
+            "y": 200.0,
+            "width": 460.0,
+            "height": 180.0,
+            "rotation": 0.0,
+            "zIndex": 1,
+            "kind": {
+                "table": {
+                    "_0": 4,
+                    "_1": 3,
+                    "_2": [0.333, 0.333, 0.334],
+                    "_3": null,
+                    "_4": "blue",
+                    "_5": true
+                }
+            },
+            "createdAt": 1000.0,
+            "updatedAt": 1000.0
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(PageObject.self, from: legacyTableJSON)
+        #expect(decoded.id == objectID)
+        guard let table = decoded.tableProperties else {
+            Issue.record("Expected tableProperties to decode from legacy JSON")
+            return
+        }
+        #expect(table.rowCount == 4)
+        #expect(table.columnCount == 3)
+        #expect(table.strokeColor == .blue)
+        #expect(table.hasHeaderRow == true)
+        #expect(table.isTextMode == false) // Legacy tables default safely to draw mode
     }
 }

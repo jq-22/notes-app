@@ -107,21 +107,86 @@ public extension TextBoxAlignment {
     }
 }
 
-public extension TextBoxStyle {
-    /// Resolves the UIKit font matching `fontSize`, `isBold`, and `isItalic` (shared with `PagePDFExporter` for WYSIWYG fidelity).
-    func resolvedUIFont() -> UIFont {
-        let baseFont = UIFont.systemFont(ofSize: fontSize, weight: isBold ? .bold : .regular)
-        if isItalic {
-            var traits = baseFont.fontDescriptor.symbolicTraits
-            traits.insert(.traitItalic)
-            if let descriptor = baseFont.fontDescriptor.withSymbolicTraits(traits) {
-                return UIFont(descriptor: descriptor, size: fontSize)
-            }
-            if !isBold {
-                return UIFont.italicSystemFont(ofSize: fontSize)
+public extension TextBoxFontDesign {
+    var uiSystemDesign: UIFontDescriptor.SystemDesign {
+        switch self {
+        case .standard: return .default
+        case .serif: return .serif
+        case .monospaced: return .monospaced
+        case .rounded: return .rounded
+        }
+    }
+
+    var swiftUIDesign: Font.Design {
+        switch self {
+        case .standard: return .default
+        case .serif: return .serif
+        case .monospaced: return .monospaced
+        case .rounded: return .rounded
+        }
+    }
+}
+
+public enum TextBoxBulletHelper {
+    public static let bulletPrefix = "• "
+
+    public static func isBulleted(_ text: String) -> Bool {
+        let lines = text.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        guard !lines.isEmpty else { return false }
+        return lines.allSatisfy { $0.hasPrefix(bulletPrefix) || $0 == "•" }
+    }
+
+    public static func toggleBullets(in text: String) -> String {
+        let lines = text.components(separatedBy: "\n")
+        let nonBlank = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let allBulleted = !nonBlank.isEmpty && nonBlank.allSatisfy { $0.hasPrefix(bulletPrefix) || $0 == "•" }
+
+        let transformed = lines.map { line -> String in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { return line }
+            if allBulleted {
+                if line.hasPrefix(bulletPrefix) {
+                    return String(line.dropFirst(bulletPrefix.count))
+                } else if line == "•" {
+                    return ""
+                }
+                return line
+            } else {
+                if line.hasPrefix(bulletPrefix) {
+                    return line
+                }
+                return bulletPrefix + line
             }
         }
-        return baseFont
+        return transformed.joined(separator: "\n")
+    }
+}
+
+public extension TextBoxStyle {
+    /// Resolves the UIKit font matching `fontSize`, `fontDesign`, `isBold`, and `isItalic` (shared with `PagePDFExporter` for WYSIWYG fidelity).
+    func resolvedUIFont() -> UIFont {
+        let baseFont = UIFont.systemFont(ofSize: fontSize, weight: isBold ? .bold : .regular)
+        var descriptor = baseFont.fontDescriptor
+        if let designed = descriptor.withDesign(fontDesign.uiSystemDesign) {
+            descriptor = designed
+        }
+        if isItalic {
+            var traits = descriptor.symbolicTraits
+            traits.insert(.traitItalic)
+            if let italicDescriptor = descriptor.withSymbolicTraits(traits) {
+                descriptor = italicDescriptor
+            }
+        }
+        return UIFont(descriptor: descriptor, size: fontSize)
+    }
+
+    /// Resolves adaptive SwiftUI font matching `fontSize`, `fontDesign`, `isBold`, and `isItalic`.
+    func resolvedSwiftUIFont() -> Font {
+        var font = Font.system(size: fontSize, weight: isBold ? .bold : .regular, design: fontDesign.swiftUIDesign)
+        if isItalic {
+            font = font.italic()
+        }
+        return font
     }
 
     /// Resolves adaptive SwiftUI text colour for the live canvas: when transparent (`backgroundColor == nil`) and using default `.black`,
@@ -364,6 +429,30 @@ public struct TextBoxEditorView: UIViewRepresentable {
                     self?.discardPendingTextEdit()
                 }
             )
+        }
+
+        public func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            guard text == "\n" else { return true }
+            guard let currentText = textView.text as NSString? else { return true }
+            let lineRange = currentText.lineRange(for: NSRange(location: range.location, length: 0))
+            let lineString = currentText.substring(with: lineRange).trimmingCharacters(in: .newlines)
+
+            if lineString.hasPrefix("• ") || lineString == "•" {
+                if lineString == "•" || lineString == "• " || lineString.trimmingCharacters(in: .whitespaces) == "•" {
+                    let replacementRange = lineRange
+                    textView.textStorage.replaceCharacters(in: replacementRange, with: "")
+                    textView.selectedRange = NSRange(location: lineRange.location, length: 0)
+                    textViewDidChange(textView)
+                    return false
+                } else {
+                    let bulletContinuation = "\n• "
+                    textView.textStorage.replaceCharacters(in: range, with: bulletContinuation)
+                    textView.selectedRange = NSRange(location: range.location + (bulletContinuation as NSString).length, length: 0)
+                    textViewDidChange(textView)
+                    return false
+                }
+            }
+            return true
         }
 
         public func textViewDidChange(_ textView: UITextView) {

@@ -149,30 +149,29 @@ public enum PagePDFExporter {
                     img.draw(in: localRect)
                 }
 
-            case .table(let rowCount, let colCount, let colFracs, let rowFracs, let strokeColor, let hasHeaderRow):
+            case .table(let table):
                 let w = object.width
                 let h = object.height
-                let colWidths: [CGFloat] = {
-                    if let fractions = colFracs, fractions.count == colCount {
-                        let sum = fractions.reduce(0, +)
-                        return fractions.map { ($0 / sum) * w }
-                    }
-                    let equalW = w / CGFloat(Swift.max(1, colCount))
-                    return Array(repeating: equalW, count: colCount)
-                }()
-                let rowHeights: [CGFloat] = {
-                    if let fractions = rowFracs, fractions.count == rowCount {
-                        let sum = fractions.reduce(0, +)
-                        return fractions.map { ($0 / sum) * h }
-                    }
-                    let equalH = h / CGFloat(Swift.max(1, rowCount))
-                    return Array(repeating: equalH, count: rowCount)
-                }()
+                let colWidths = object.tableColumnWidths()
+                let rowHeights = object.tableRowHeights()
 
-                let uiColor = strokeColor.uiColor(opacity: 1.0)
+                let uiColor = table.strokeColor.uiColor(opacity: 1.0)
                 cgContext.setStrokeColor(uiColor.cgColor)
 
-                if hasHeaderRow, let firstH = rowHeights.first {
+                // Striped rows fill if enabled
+                if table.isStriped {
+                    var currentY: CGFloat = 0
+                    for rowIdx in 0..<rowHeights.count {
+                        let rowH = rowHeights[rowIdx]
+                        if rowIdx % 2 == 1 {
+                            cgContext.setFillColor(uiColor.withAlphaComponent(0.04).cgColor)
+                            cgContext.fill(CGRect(x: 0, y: currentY, width: w, height: rowH))
+                        }
+                        currentY += rowH
+                    }
+                }
+
+                if table.hasHeaderRow, let firstH = rowHeights.first {
                     cgContext.setFillColor(uiColor.withAlphaComponent(0.10).cgColor)
                     cgContext.fill(CGRect(x: 0, y: 0, width: w, height: firstH))
                 }
@@ -199,6 +198,43 @@ public enum PagePDFExporter {
                     cgContext.addLine(to: CGPoint(x: w, y: currentY))
                 }
                 cgContext.strokePath()
+
+                // Cell texts in text mode or when saved
+                if !table.cellTexts.isEmpty {
+                    let font = table.textStyle.resolvedUIFont()
+                    let textColor = table.textStyle.textColor.uiColor(opacity: 1.0)
+                    let paragraphStyle = NSMutableParagraphStyle()
+                    paragraphStyle.alignment = table.textStyle.alignment.nsTextAlignment
+                    paragraphStyle.lineBreakMode = .byWordWrapping
+                    let textAttrs: [NSAttributedString.Key: Any] = [
+                        .font: font,
+                        .foregroundColor: textColor,
+                        .paragraphStyle: paragraphStyle
+                    ]
+                    var cellY: CGFloat = 0
+                    for r in 0..<rowHeights.count {
+                        let rowH = rowHeights[r]
+                        var cellX: CGFloat = 0
+                        for c in 0..<colWidths.count {
+                            let colW = colWidths[c]
+                            let key = "\(r),\(c)"
+                            if let cellText = table.cellTexts[key], !cellText.isEmpty {
+                                let cellRect = CGRect(
+                                    x: cellX + 4,
+                                    y: cellY + 3,
+                                    width: Swift.max(1, colW - 8),
+                                    height: Swift.max(1, rowH - 6)
+                                )
+                                cgContext.saveGState()
+                                cgContext.clip(to: cellRect)
+                                (cellText as NSString).draw(in: cellRect, withAttributes: textAttrs)
+                                cgContext.restoreGState()
+                            }
+                            cellX += colW
+                        }
+                        cellY += rowH
+                    }
+                }
 
             case .pageLink(_, _, _, let fallbackTitle):
                 let cardRect = CGRect(x: 0, y: 0, width: object.width, height: object.height)

@@ -85,12 +85,47 @@ public enum TextBoxAlignment: String, Codable, CaseIterable, Identifiable, Equat
     }
 }
 
+/// Font family / design for a `.textBox` or `.table` text styling.
+public enum TextBoxFontDesign: String, Codable, CaseIterable, Identifiable, Equatable, Hashable, Sendable {
+    case standard
+    case serif
+    case monospaced
+    case rounded
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .standard: return "Default"
+        case .serif: return "Serif"
+        case .monospaced: return "Mono"
+        case .rounded: return "Rounded"
+        }
+    }
+
+    public var systemImageName: String {
+        switch self {
+        case .standard: return "textformat"
+        case .serif: return "character.book.closed"
+        case .monospaced: return "chevron.left.forwardslash.chevron.right"
+        case .rounded: return "character.circle"
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        self = TextBoxFontDesign(rawValue: raw) ?? .standard
+    }
+}
+
 /// Whole-card typography and card-appearance styling for a `.textBox` `PageObject`.
 public struct TextBoxStyle: Codable, Equatable, Hashable, Sendable {
     public static let fontSizeRange: ClosedRange<CGFloat> = 10.0...72.0
     public static let defaultFontSize: CGFloat = 16.0
 
     public var fontSize: CGFloat
+    public var fontDesign: TextBoxFontDesign
     public var isBold: Bool
     public var isItalic: Bool
     public var alignment: TextBoxAlignment
@@ -100,6 +135,7 @@ public struct TextBoxStyle: Codable, Equatable, Hashable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case fontSize
+        case fontDesign
         case isBold
         case isItalic
         case alignment
@@ -110,6 +146,7 @@ public struct TextBoxStyle: Codable, Equatable, Hashable, Sendable {
 
     public init(
         fontSize: CGFloat = TextBoxStyle.defaultFontSize,
+        fontDesign: TextBoxFontDesign = .standard,
         isBold: Bool = false,
         isItalic: Bool = false,
         alignment: TextBoxAlignment = .leading,
@@ -118,6 +155,7 @@ public struct TextBoxStyle: Codable, Equatable, Hashable, Sendable {
         borderColor: InkColorPreset? = nil
     ) {
         self.fontSize = Self.clampedFontSize(fontSize)
+        self.fontDesign = fontDesign
         self.isBold = isBold
         self.isItalic = isItalic
         self.alignment = alignment
@@ -130,6 +168,7 @@ public struct TextBoxStyle: Codable, Equatable, Hashable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let decodedFontSize = try container.decodeIfPresent(CGFloat.self, forKey: .fontSize) ?? Self.defaultFontSize
         self.fontSize = Self.clampedFontSize(decodedFontSize)
+        self.fontDesign = try container.decodeIfPresent(TextBoxFontDesign.self, forKey: .fontDesign) ?? .standard
         self.isBold = try container.decodeIfPresent(Bool.self, forKey: .isBold) ?? false
         self.isItalic = try container.decodeIfPresent(Bool.self, forKey: .isItalic) ?? false
         self.alignment = try container.decodeIfPresent(TextBoxAlignment.self, forKey: .alignment) ?? .leading
@@ -144,23 +183,67 @@ public struct TextBoxStyle: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+/// Structured grid table configuration, styling, and cell text storage.
+public struct TableProperties: Codable, Equatable, Hashable, Sendable {
+    public var rowCount: Int
+    public var columnCount: Int
+    public var columnWidthFractions: [CGFloat]?
+    public var rowHeightFractions: [CGFloat]?
+    public var strokeColor: InkColorPreset
+    public var hasHeaderRow: Bool
+    public var isStriped: Bool
+    public var isTextMode: Bool
+    public var cellTexts: [String: String]
+    public var textStyle: TextBoxStyle
+
+    public init(
+        rowCount: Int = 4,
+        columnCount: Int = 3,
+        columnWidthFractions: [CGFloat]? = nil,
+        rowHeightFractions: [CGFloat]? = nil,
+        strokeColor: InkColorPreset = .black,
+        hasHeaderRow: Bool = true,
+        isStriped: Bool = false,
+        isTextMode: Bool = false,
+        cellTexts: [String: String] = [:],
+        textStyle: TextBoxStyle = TextBoxStyle(fontSize: 14)
+    ) {
+        self.rowCount = Swift.max(1, rowCount)
+        self.columnCount = Swift.max(1, columnCount)
+        self.columnWidthFractions = columnWidthFractions
+        self.rowHeightFractions = rowHeightFractions
+        self.strokeColor = strokeColor
+        self.hasHeaderRow = hasHeaderRow
+        self.isStriped = isStriped
+        self.isTextMode = isTextMode
+        self.cellTexts = cellTexts
+        self.textStyle = textStyle
+    }
+
+    public func text(forRow row: Int, column col: Int) -> String {
+        cellTexts["\(row),\(col)"] ?? ""
+    }
+
+    public mutating func setText(_ text: String, forRow row: Int, column col: Int) {
+        let key = "\(row),\(col)"
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            cellTexts.removeValue(forKey: key)
+        } else {
+            cellTexts[key] = text
+        }
+    }
+}
+
 /// Payload type for a `PageObject`.
-public enum PageObjectKind: Codable, Equatable, Hashable, Sendable {
+public enum PageObjectKind: Equatable, Hashable, Sendable {
     /// A vector geometric shape drawn with a chosen colour and stroke width.
     case basicShape(kind: BasicShapeKind, strokeColor: InkColorPreset, strokeWidth: CGFloat)
     /// An imported image whose binary data is stored on disk via `PageStore` under `assetID`.
     case image(assetID: UUID)
     /// A group of PencilKit strokes (from Lasso Copy/Paste or the Notebook Shape Library) that can be moved, resized, rotated, and recoloured.
     case strokeGroup(drawingData: Data, sourceBoundsWidth: CGFloat, sourceBoundsHeight: CGFloat, tintColorOverride: InkColorPreset?)
-    /// A structured grid table for handwritten notes (e.g. Name / Meaning / Example) where ink flows naturally across cells.
-    case table(
-        rowCount: Int,
-        columnCount: Int,
-        columnWidthFractions: [CGFloat]?,
-        rowHeightFractions: [CGFloat]?,
-        strokeColor: InkColorPreset,
-        hasHeaderRow: Bool
-    )
+    /// A structured grid table for handwritten or typed notes where each cell has a fixed size and text is clipped without spilling.
+    case table(TableProperties)
     /// A link to another page in the notebook hierarchy (by permanent UUID).
     case pageLink(
         targetPageID: UUID,
@@ -173,6 +256,158 @@ public enum PageObjectKind: Codable, Equatable, Hashable, Sendable {
         text: String,
         style: TextBoxStyle
     )
+}
+
+extension PageObjectKind: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case basicShape
+        case image
+        case strokeGroup
+        case table
+        case pageLink
+        case textBox
+    }
+
+    private enum LegacyTableKeys: String, CodingKey {
+        case _0 // rowCount
+        case _1 // columnCount
+        case _2 // columnWidthFractions
+        case _3 // rowHeightFractions
+        case _4 // strokeColor
+        case _5 // hasHeaderRow
+        case _6 // isStriped
+        case _7 // isTextMode
+        case _8 // cellTexts
+        case _9 // textStyle
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if container.contains(.basicShape) {
+            struct BasicShapePayload: Codable {
+                let _0: BasicShapeKind
+                let _1: InkColorPreset
+                let _2: CGFloat
+            }
+            let payload = try container.decode(BasicShapePayload.self, forKey: .basicShape)
+            self = .basicShape(kind: payload._0, strokeColor: payload._1, strokeWidth: payload._2)
+        } else if container.contains(.image) {
+            struct ImagePayload: Codable {
+                let assetID: UUID
+            }
+            let payload = try container.decode(ImagePayload.self, forKey: .image)
+            self = .image(assetID: payload.assetID)
+        } else if container.contains(.strokeGroup) {
+            struct StrokeGroupPayload: Codable {
+                let _0: Data
+                let _1: CGFloat
+                let _2: CGFloat
+                let _3: InkColorPreset?
+            }
+            let payload = try container.decode(StrokeGroupPayload.self, forKey: .strokeGroup)
+            self = .strokeGroup(drawingData: payload._0, sourceBoundsWidth: payload._1, sourceBoundsHeight: payload._2, tintColorOverride: payload._3)
+        } else if container.contains(.pageLink) {
+            struct PageLinkPayload: Codable {
+                let _0: UUID
+                let _1: UUID
+                let _2: UUID
+                let _3: String
+            }
+            let payload = try container.decode(PageLinkPayload.self, forKey: .pageLink)
+            self = .pageLink(targetPageID: payload._0, targetSectionID: payload._1, targetNotebookID: payload._2, fallbackTitle: payload._3)
+        } else if container.contains(.textBox) {
+            struct PositionalTextBoxPayload: Codable {
+                let _0: String
+                let _1: TextBoxStyle
+            }
+            struct NamedTextBoxPayload: Codable {
+                let text: String
+                let style: TextBoxStyle?
+            }
+            if let pos = try? container.decode(PositionalTextBoxPayload.self, forKey: .textBox) {
+                self = .textBox(text: pos._0, style: pos._1)
+            } else if let named = try? container.decode(NamedTextBoxPayload.self, forKey: .textBox) {
+                self = .textBox(text: named.text, style: named.style ?? TextBoxStyle())
+            } else {
+                let payload = try container.decode(PositionalTextBoxPayload.self, forKey: .textBox)
+                self = .textBox(text: payload._0, style: payload._1)
+            }
+        } else if container.contains(.table) {
+            if let directProps = try? container.decode(TableProperties.self, forKey: .table) {
+                self = .table(directProps)
+            } else {
+                let tableContainer = try container.nestedContainer(keyedBy: LegacyTableKeys.self, forKey: .table)
+                let rows = try tableContainer.decode(Int.self, forKey: ._0)
+                let cols = try tableContainer.decode(Int.self, forKey: ._1)
+                let colFracs = try tableContainer.decodeIfPresent([CGFloat].self, forKey: ._2)
+                let rowFracs = try tableContainer.decodeIfPresent([CGFloat].self, forKey: ._3)
+                let strokeColor = try tableContainer.decode(InkColorPreset.self, forKey: ._4)
+                let hasHeader = try tableContainer.decode(Bool.self, forKey: ._5)
+                let isStriped = try tableContainer.decodeIfPresent(Bool.self, forKey: ._6) ?? false
+                let isTextMode = try tableContainer.decodeIfPresent(Bool.self, forKey: ._7) ?? false
+                let cellTexts = try tableContainer.decodeIfPresent([String: String].self, forKey: ._8) ?? [:]
+                let textStyle = try tableContainer.decodeIfPresent(TextBoxStyle.self, forKey: ._9) ?? TextBoxStyle(fontSize: 14)
+                self = .table(TableProperties(
+                    rowCount: rows,
+                    columnCount: cols,
+                    columnWidthFractions: colFracs,
+                    rowHeightFractions: rowFracs,
+                    strokeColor: strokeColor,
+                    hasHeaderRow: hasHeader,
+                    isStriped: isStriped,
+                    isTextMode: isTextMode,
+                    cellTexts: cellTexts,
+                    textStyle: textStyle
+                ))
+            }
+        } else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Unknown PageObjectKind")
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .basicShape(let kind, let color, let width):
+            struct BasicShapePayload: Codable {
+                let _0: BasicShapeKind
+                let _1: InkColorPreset
+                let _2: CGFloat
+            }
+            try container.encode(BasicShapePayload(_0: kind, _1: color, _2: width), forKey: .basicShape)
+        case .image(let assetID):
+            struct ImagePayload: Codable {
+                let assetID: UUID
+            }
+            try container.encode(ImagePayload(assetID: assetID), forKey: .image)
+        case .strokeGroup(let data, let w, let h, let tint):
+            struct StrokeGroupPayload: Codable {
+                let _0: Data
+                let _1: CGFloat
+                let _2: CGFloat
+                let _3: InkColorPreset?
+            }
+            try container.encode(StrokeGroupPayload(_0: data, _1: w, _2: h, _3: tint), forKey: .strokeGroup)
+        case .table(let props):
+            try container.encode(props, forKey: .table)
+        case .pageLink(let pageID, let secID, let nbID, let title):
+            struct PageLinkPayload: Codable {
+                let _0: UUID
+                let _1: UUID
+                let _2: UUID
+                let _3: String
+            }
+            try container.encode(PageLinkPayload(_0: pageID, _1: secID, _2: nbID, _3: title), forKey: .pageLink)
+        case .textBox(let text, let style):
+            struct TextBoxPayload: Codable {
+                let _0: String
+                let _1: TextBoxStyle
+            }
+            try container.encode(TextBoxPayload(_0: text, _1: style), forKey: .textBox)
+        }
+    }
 }
 
 /// A placed object on an A4 page with unified move, 4-corner resize, and top-handle rotate geometry.
@@ -327,6 +562,8 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
         columns: Int = 3,
         color: InkColorPreset = .black,
         hasHeaderRow: Bool = true,
+        isStriped: Bool = false,
+        isTextMode: Bool = false,
         zIndex: Int = 0,
         pageSize: CGSize = PageGeometry.a4Size
     ) -> PageObject {
@@ -339,18 +576,23 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
             x: (pageSize.width - tableWidth) * 0.5,
             y: (pageSize.height - tableHeight) * 0.38
         )
+        let props = TableProperties(
+            rowCount: safeRows,
+            columnCount: safeCols,
+            columnWidthFractions: nil,
+            rowHeightFractions: nil,
+            strokeColor: color,
+            hasHeaderRow: hasHeaderRow,
+            isStriped: isStriped,
+            isTextMode: isTextMode,
+            cellTexts: [:],
+            textStyle: TextBoxStyle(fontSize: 14)
+        )
         return PageObject(
             frame: CGRect(origin: origin, size: CGSize(width: tableWidth, height: tableHeight)),
             rotation: 0,
             zIndex: zIndex,
-            kind: .table(
-                rowCount: safeRows,
-                columnCount: safeCols,
-                columnWidthFractions: nil,
-                rowHeightFractions: nil,
-                strokeColor: color,
-                hasHeaderRow: hasHeaderRow
-            )
+            kind: .table(props)
         )
     }
 
@@ -578,6 +820,19 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
         return copy
     }
 
+    /// Accessor for table properties when `kind` is `.table`.
+    public var tableProperties: TableProperties? {
+        get {
+            if case .table(let props) = kind { return props }
+            return nil
+        }
+        set {
+            if let newValue {
+                kind = .table(newValue)
+            }
+        }
+    }
+
     /// Updates the stroke/tint colour for basic shapes, tables, or stroke-group objects.
     public func recolored(to newColor: InkColorPreset, now: Date = Date()) -> PageObject {
         var copy = self
@@ -588,15 +843,9 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
         case .strokeGroup(let data, let w, let h, _):
             copy.kind = .strokeGroup(drawingData: data, sourceBoundsWidth: w, sourceBoundsHeight: h, tintColorOverride: newColor)
             copy.updatedAt = now
-        case .table(let rows, let cols, let colFracs, let rowFracs, _, let header):
-            copy.kind = .table(
-                rowCount: rows,
-                columnCount: cols,
-                columnWidthFractions: colFracs,
-                rowHeightFractions: rowFracs,
-                strokeColor: newColor,
-                hasHeaderRow: header
-            )
+        case .table(var table):
+            table.strokeColor = newColor
+            copy.kind = .table(table)
             copy.updatedAt = now
         case .textBox(let text, var style):
             style.textColor = newColor
@@ -634,141 +883,160 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
 
     /// Appends a new row to the table and expands its height accordingly.
     public func withAddedTableRow(now: Date = Date()) -> PageObject {
-        guard case .table(let rows, let cols, let colFracs, _, let strokeColor, let header) = kind else {
-            return self
-        }
-        let newRows = rows + 1
-        let rowHeight = height / CGFloat(rows)
+        guard var table = tableProperties else { return self }
+        let newRows = table.rowCount + 1
+        let rowHeight = height / CGFloat(table.rowCount)
+        table.rowCount = newRows
+        table.rowHeightFractions = nil
         var copy = self
         copy.height += rowHeight
-        copy.kind = .table(
-            rowCount: newRows,
-            columnCount: cols,
-            columnWidthFractions: colFracs,
-            rowHeightFractions: nil,
-            strokeColor: strokeColor,
-            hasHeaderRow: header
-        )
+        copy.kind = .table(table)
         copy.updatedAt = now
         return copy
     }
 
     /// Removes the bottom row from the table (minimum 1 row).
     public func withRemovedTableRow(now: Date = Date()) -> PageObject {
-        guard case .table(let rows, let cols, let colFracs, _, let strokeColor, let header) = kind, rows > 1 else {
-            return self
+        guard var table = tableProperties, table.rowCount > 1 else { return self }
+        let rowHeight = height / CGFloat(table.rowCount)
+        let removedRow = table.rowCount - 1
+        for c in 0..<table.columnCount {
+            table.cellTexts.removeValue(forKey: "\(removedRow),\(c)")
         }
-        let newRows = rows - 1
-        let rowHeight = height / CGFloat(rows)
+        table.rowCount -= 1
+        table.rowHeightFractions = nil
         var copy = self
         copy.height = Swift.max(Self.minimumDimension, height - rowHeight)
-        copy.kind = .table(
-            rowCount: newRows,
-            columnCount: cols,
-            columnWidthFractions: colFracs,
-            rowHeightFractions: nil,
-            strokeColor: strokeColor,
-            hasHeaderRow: header
-        )
+        copy.kind = .table(table)
         copy.updatedAt = now
         return copy
     }
 
     /// Appends a new column to the table and expands its width accordingly.
     public func withAddedTableColumn(now: Date = Date()) -> PageObject {
-        guard case .table(let rows, let cols, _, let rowFracs, let strokeColor, let header) = kind else {
-            return self
-        }
-        let newCols = cols + 1
-        let colWidth = width / CGFloat(cols)
+        guard var table = tableProperties else { return self }
+        let newCols = table.columnCount + 1
+        let colWidth = width / CGFloat(table.columnCount)
+        table.columnCount = newCols
+        table.columnWidthFractions = nil
         var copy = self
         copy.width += colWidth
-        copy.kind = .table(
-            rowCount: rows,
-            columnCount: newCols,
-            columnWidthFractions: nil,
-            rowHeightFractions: rowFracs,
-            strokeColor: strokeColor,
-            hasHeaderRow: header
-        )
+        copy.kind = .table(table)
         copy.updatedAt = now
         return copy
     }
 
     /// Removes the rightmost column from the table (minimum 1 column).
     public func withRemovedTableColumn(now: Date = Date()) -> PageObject {
-        guard case .table(let rows, let cols, _, let rowFracs, let strokeColor, let header) = kind, cols > 1 else {
-            return self
+        guard var table = tableProperties, table.columnCount > 1 else { return self }
+        let colWidth = width / CGFloat(table.columnCount)
+        let removedCol = table.columnCount - 1
+        for r in 0..<table.rowCount {
+            table.cellTexts.removeValue(forKey: "\(r),\(removedCol)")
         }
-        let newCols = cols - 1
-        let colWidth = width / CGFloat(cols)
+        table.columnCount -= 1
+        table.columnWidthFractions = nil
         var copy = self
         copy.width = Swift.max(Self.minimumDimension, width - colWidth)
-        copy.kind = .table(
-            rowCount: rows,
-            columnCount: newCols,
-            columnWidthFractions: nil,
-            rowHeightFractions: rowFracs,
-            strokeColor: strokeColor,
-            hasHeaderRow: header
-        )
+        copy.kind = .table(table)
         copy.updatedAt = now
         return copy
     }
 
     /// Toggles the header row styling for table objects.
     public func withToggledTableHeader(now: Date = Date()) -> PageObject {
-        guard case .table(let rows, let cols, let colFracs, let rowFracs, let strokeColor, let header) = kind else {
-            return self
-        }
+        guard var table = tableProperties else { return self }
+        table.hasHeaderRow.toggle()
         var copy = self
-        copy.kind = .table(
-            rowCount: rows,
-            columnCount: cols,
-            columnWidthFractions: colFracs,
-            rowHeightFractions: rowFracs,
-            strokeColor: strokeColor,
-            hasHeaderRow: !header
-        )
+        copy.kind = .table(table)
+        copy.updatedAt = now
+        return copy
+    }
+
+    /// Toggles alternating row shading ("zebra stripes") for table objects.
+    public func withToggledTableStriping(now: Date = Date()) -> PageObject {
+        guard var table = tableProperties else { return self }
+        table.isStriped.toggle()
+        var copy = self
+        copy.kind = .table(table)
+        copy.updatedAt = now
+        return copy
+    }
+
+    /// Toggles between Draw Mode (pencil inking) and Text Mode (typed cell text).
+    public func withToggledTableTextMode(now: Date = Date()) -> PageObject {
+        guard var table = tableProperties else { return self }
+        table.isTextMode.toggle()
+        var copy = self
+        copy.kind = .table(table)
+        copy.updatedAt = now
+        return copy
+    }
+
+    /// Sets the text content for a single cell in a table.
+    public func withTableCellText(row: Int, column col: Int, text: String, now: Date = Date()) -> PageObject {
+        guard var table = tableProperties else { return self }
+        table.setText(text, forRow: row, column: col)
+        var copy = self
+        copy.kind = .table(table)
+        copy.updatedAt = now
+        return copy
+    }
+
+    /// Updates the text styling for all cells in a table.
+    public func withTableTextStyle(_ newStyle: TextBoxStyle, now: Date = Date()) -> PageObject {
+        guard var table = tableProperties else { return self }
+        table.textStyle = newStyle
+        var copy = self
+        copy.kind = .table(table)
+        copy.updatedAt = now
+        return copy
+    }
+
+    /// Updates the outline/grid stroke color for a table.
+    public func withTableStrokeColor(_ newColor: InkColorPreset, now: Date = Date()) -> PageObject {
+        guard var table = tableProperties else { return self }
+        table.strokeColor = newColor
+        var copy = self
+        copy.kind = .table(table)
         copy.updatedAt = now
         return copy
     }
 
     /// Returns the pixel widths of all columns for a table object, summing exactly to `width`.
     public func tableColumnWidths() -> [CGFloat] {
-        guard case .table(_, let colCount, let colFracs, _, _, _) = kind, colCount > 0 else {
+        guard let table = tableProperties, table.columnCount > 0 else {
             return [width]
         }
-        if let fractions = colFracs, fractions.count == colCount {
+        if let fractions = table.columnWidthFractions, fractions.count == table.columnCount {
             let sum = fractions.reduce(0, +)
             if sum > 0.0001 {
                 return fractions.map { ($0 / sum) * width }
             }
         }
-        let equalW = width / CGFloat(colCount)
-        return Array(repeating: equalW, count: colCount)
+        let equalW = width / CGFloat(table.columnCount)
+        return Array(repeating: equalW, count: table.columnCount)
     }
 
     /// Returns the pixel heights of all rows for a table object, summing exactly to `height`.
     public func tableRowHeights() -> [CGFloat] {
-        guard case .table(let rowCount, _, _, let rowFracs, _, _) = kind, rowCount > 0 else {
+        guard let table = tableProperties, table.rowCount > 0 else {
             return [height]
         }
-        if let fractions = rowFracs, fractions.count == rowCount {
+        if let fractions = table.rowHeightFractions, fractions.count == table.rowCount {
             let sum = fractions.reduce(0, +)
             if sum > 0.0001 {
                 return fractions.map { ($0 / sum) * height }
             }
         }
-        let equalH = height / CGFloat(rowCount)
-        return Array(repeating: equalH, count: rowCount)
+        let equalH = height / CGFloat(table.rowCount)
+        return Array(repeating: equalH, count: table.rowCount)
     }
 
     /// Adjusts the column divider between column `dividerIndex` and `dividerIndex + 1` by `pageDelta` (in page points).
     /// Projects page movement into local table space, resizing adjacent columns while preserving total width.
     public func adjustingColumnDivider(at dividerIndex: Int, pageDelta: CGSize, now: Date = Date()) -> PageObject {
-        guard case .table(let rowCount, let colCount, _, let rowFracs, let strokeColor, let hasHeaderRow) = kind,
-              dividerIndex >= 0, dividerIndex < colCount - 1 else {
+        guard var table = tableProperties, dividerIndex >= 0, dividerIndex < table.columnCount - 1 else {
             return self
         }
         let cosA = cos(rotation)
@@ -792,17 +1060,10 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
         colWidths[dividerIndex + 1] = rightW - actualDelta
 
         let total = colWidths.reduce(0, +)
-        let newFractions = colWidths.map { $0 / total }
+        table.columnWidthFractions = colWidths.map { $0 / total }
 
         var copy = self
-        copy.kind = .table(
-            rowCount: rowCount,
-            columnCount: colCount,
-            columnWidthFractions: newFractions,
-            rowHeightFractions: rowFracs,
-            strokeColor: strokeColor,
-            hasHeaderRow: hasHeaderRow
-        )
+        copy.kind = .table(table)
         copy.updatedAt = now
         return copy
     }
@@ -810,8 +1071,7 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
     /// Adjusts table row heights uniformly by `pageDelta` (in page points).
     /// Smoothly expands or shrinks all rows equally, updating the total table height.
     public func adjustingTableRowHeight(pageDelta: CGSize, now: Date = Date()) -> PageObject {
-        guard case .table(let rowCount, let colCount, let colFracs, _, let strokeColor, let hasHeaderRow) = kind,
-              rowCount > 0 else {
+        guard var table = tableProperties, table.rowCount > 0 else {
             return self
         }
         let cosA = cos(rotation)
@@ -820,19 +1080,13 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
 
         let minRowHeight: CGFloat = 24.0
         let currentHeights = tableRowHeights()
-        let currentAvgHeight = currentHeights.reduce(0, +) / CGFloat(rowCount)
-        let newRowHeight = Swift.max(minRowHeight, currentAvgHeight + (localDeltaY / CGFloat(rowCount)))
+        let currentAvgHeight = currentHeights.reduce(0, +) / CGFloat(table.rowCount)
+        let newRowHeight = Swift.max(minRowHeight, currentAvgHeight + (localDeltaY / CGFloat(table.rowCount)))
 
+        table.rowHeightFractions = nil
         var copy = self
-        copy.height = newRowHeight * CGFloat(rowCount)
-        copy.kind = .table(
-            rowCount: rowCount,
-            columnCount: colCount,
-            columnWidthFractions: colFracs,
-            rowHeightFractions: nil,
-            strokeColor: strokeColor,
-            hasHeaderRow: hasHeaderRow
-        )
+        copy.height = newRowHeight * CGFloat(table.rowCount)
+        copy.kind = .table(table)
         copy.updatedAt = now
         return copy
     }
