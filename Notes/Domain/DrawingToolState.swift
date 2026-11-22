@@ -47,7 +47,9 @@ public enum EraserMode: String, Codable, CaseIterable, Equatable, Sendable {
     }
 }
 
-/// Explicit ink colour presets (with separate Black and White options instead of automatic dark/light inversion).
+/// Ink colour presets. PencilKit dynamically inverts monochrome ink across Light and Dark mode to ensure
+/// handwriting contrast against the paper background (`.black` adapts to white on dark paper, `.white` adapts to black).
+/// The UI swatches dynamically reflect this visual reality (`inkDisplayColor(for:)`) to prevent user confusion.
 public enum InkColorPreset: String, Codable, CaseIterable, Identifiable, Equatable, Sendable {
     case black
     case white

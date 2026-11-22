@@ -28,6 +28,43 @@ extension InkColorPreset {
         }
     }
 
+    /// Resolves the actual appearance of the ink swatch in the current UI color scheme.
+    /// In Light Mode: `.black` draws as dark ink on white paper, `.white` draws as light ink.
+    /// In Dark Mode: PencilKit dynamically inverts monochrome ink so handwriting remains legible on dark paper.
+    /// Therefore, in Dark Mode `.black` draws as white (primary ink), and `.white` draws as black.
+    /// By dynamically matching `colorScheme`, the UI swatches and toolbar indicator accurately
+    /// represent what the Apple Pencil will draw on the canvas, eliminating user confusion.
+    public func inkDisplayColor(for colorScheme: ColorScheme) -> Color {
+        switch self {
+        case .black:
+            return colorScheme == .dark ? Color.white : Color(red: 0.08, green: 0.08, blue: 0.08)
+        case .white:
+            return colorScheme == .dark ? Color(red: 0.08, green: 0.08, blue: 0.08) : Color.white
+        case .blue: return Color(uiColor: .systemBlue)
+        case .red: return Color(uiColor: .systemRed)
+        case .green: return Color(uiColor: .systemGreen)
+        case .orange: return Color(uiColor: .systemOrange)
+        case .purple: return Color(uiColor: .systemPurple)
+        case .yellow: return Color(uiColor: .systemYellow)
+        }
+    }
+
+    /// User-facing name matching the visual color drawn in the current color scheme.
+    public func inkDisplayName(for colorScheme: ColorScheme) -> String {
+        switch self {
+        case .black:
+            return colorScheme == .dark ? "White (Adaptive)" : "Black"
+        case .white:
+            return colorScheme == .dark ? "Black" : "White"
+        case .blue: return "Blue"
+        case .red: return "Red"
+        case .green: return "Green"
+        case .orange: return "Orange"
+        case .purple: return "Purple"
+        case .yellow: return "Yellow"
+        }
+    }
+
     public func uiColor(opacity: CGFloat) -> UIColor {
         let base: UIColor
         switch self {
@@ -50,6 +87,7 @@ extension InkColorPreset {
 
 public struct DrawingToolMenuButton: View {
     @Binding var toolState: DrawingToolState
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var isPopoverPresented = false
     @State private var subpage: Subpage = .root
@@ -68,9 +106,9 @@ public struct DrawingToolMenuButton: View {
     private var activeIndicatorColor: Color {
         switch toolState.activeTool {
         case .pen:
-            return toolState.penColor.swiftUIColor.opacity(Double(toolState.penOpacity))
+            return toolState.penColor.inkDisplayColor(for: colorScheme).opacity(Double(toolState.penOpacity))
         case .highlighter:
-            return toolState.highlighterColor.swiftUIColor.opacity(Double(max(toolState.highlighterOpacity, 0.5)))
+            return toolState.highlighterColor.inkDisplayColor(for: colorScheme).opacity(Double(max(toolState.highlighterOpacity, 0.5)))
         case .eraser:
             return .secondary
         }
@@ -135,7 +173,7 @@ public struct DrawingToolMenuButton: View {
                 title: "Pen",
                 icon: DrawingToolKind.pen.systemImageName,
                 isSelected: toolState.activeTool == .pen,
-                colorBadge: toolState.penColor.swiftUIColor.opacity(Double(toolState.penOpacity)),
+                colorBadge: toolState.penColor.inkDisplayColor(for: colorScheme).opacity(Double(toolState.penOpacity)),
                 selectAction: {
                     toolState.selectTool(.pen)
                 },
@@ -153,7 +191,7 @@ public struct DrawingToolMenuButton: View {
                 title: "Highlighter",
                 icon: DrawingToolKind.highlighter.systemImageName,
                 isSelected: toolState.activeTool == .highlighter,
-                colorBadge: toolState.highlighterColor.swiftUIColor.opacity(Double(max(toolState.highlighterOpacity, 0.5))),
+                colorBadge: toolState.highlighterColor.inkDisplayColor(for: colorScheme).opacity(Double(max(toolState.highlighterOpacity, 0.5))),
                 selectAction: {
                     toolState.selectTool(.highlighter)
                 },
@@ -440,7 +478,7 @@ public struct DrawingToolMenuButton: View {
                 } label: {
                     ZStack {
                         Circle()
-                            .fill(preset.swiftUIColor)
+                            .fill(preset.inkDisplayColor(for: colorScheme))
                             .frame(width: 17, height: 17)
                             .overlay(
                                 Circle()
@@ -454,7 +492,7 @@ public struct DrawingToolMenuButton: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .help(preset.displayName)
+                .help(preset.inkDisplayName(for: colorScheme))
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)

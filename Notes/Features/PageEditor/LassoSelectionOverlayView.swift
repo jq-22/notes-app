@@ -29,6 +29,7 @@ public struct LassoSelectionOverlayView: View {
     @State private var currentLassoPoints: [CGPoint] = []
     @State private var liveTranslation: CGSize = .zero
     @State private var isDraggingSelectionBox: Bool = false
+    @Environment(\.colorScheme) private var colorScheme
 
     private static let coordinateSpaceName = "A4LassoCoordinateSpace"
 
@@ -136,7 +137,7 @@ public struct LassoSelectionOverlayView: View {
                     onRecolorSelection(preset)
                 } label: {
                     Circle()
-                        .fill(preset.swiftUIColor)
+                        .fill(preset.inkDisplayColor(for: colorScheme))
                         .frame(width: 17, height: 17)
                         .overlay(
                             Circle()
@@ -144,7 +145,7 @@ public struct LassoSelectionOverlayView: View {
                         )
                 }
                 .buttonStyle(.plain)
-                .help("Recolour Selection (\(preset.displayName))")
+                .help("Recolour Selection (\(preset.inkDisplayName(for: colorScheme)))")
             }
 
             Divider()
