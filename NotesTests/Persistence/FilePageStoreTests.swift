@@ -144,4 +144,36 @@ struct FilePageStoreTests {
         #expect(try store.loadShapeLibraryPreview(for: item1.id) == nil)
         #expect(try store.loadShapeLibraryPreview(for: item2.id) == preview2)
     }
+
+    @Test("Round-trip saving and loading notebooks preserves styled and rotated TextBox PageObjects")
+    func roundTripTextBoxPageObjects() throws {
+        let dir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = FilePageStore(baseDirectoryURL: dir)
+        let style = TextBoxStyle(
+            fontSize: 22,
+            isBold: true,
+            isItalic: true,
+            alignment: .center,
+            textColor: .blue,
+            backgroundColor: .yellow,
+            borderColor: .black
+        )
+        let textBox = PageObject(
+            frame: CGRect(x: 80, y: 160, width: 280, height: 130),
+            rotation: 0.35,
+            zIndex: 2,
+            kind: .textBox(text: "Exam Formula:\nE = mc^2", style: style)
+        )
+        let page = Page(title: "Physics Notes", objects: [textBox])
+        let section = NoteSection(title: "Relativity", pages: [page])
+        let notebook = Notebook(title: "Physics", defaultPaperType: .lined, sections: [section])
+
+        try store.saveNotebooks([notebook])
+        let restored = try store.loadNotebooks()
+
+        #expect(restored == [notebook])
+        #expect(restored.first?.sections.first?.pages.first?.objects.first == textBox)
+    }
 }

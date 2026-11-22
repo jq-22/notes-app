@@ -54,6 +54,96 @@ public enum LineEndpointHandle: String, CaseIterable, Equatable, Sendable {
     case end
 }
 
+/// Horizontal text alignment inside a `.textBox` `PageObject`.
+public enum TextBoxAlignment: String, Codable, CaseIterable, Identifiable, Equatable, Hashable, Sendable {
+    case leading
+    case center
+    case trailing
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .leading: return "Left"
+        case .center: return "Center"
+        case .trailing: return "Right"
+        }
+    }
+
+    public var systemImageName: String {
+        switch self {
+        case .leading: return "text.alignleft"
+        case .center: return "text.aligncenter"
+        case .trailing: return "text.alignright"
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        self = TextBoxAlignment(rawValue: raw) ?? .leading
+    }
+}
+
+/// Whole-card typography and card-appearance styling for a `.textBox` `PageObject`.
+public struct TextBoxStyle: Codable, Equatable, Hashable, Sendable {
+    public static let fontSizeRange: ClosedRange<CGFloat> = 10.0...72.0
+    public static let defaultFontSize: CGFloat = 16.0
+
+    public var fontSize: CGFloat
+    public var isBold: Bool
+    public var isItalic: Bool
+    public var alignment: TextBoxAlignment
+    public var textColor: InkColorPreset
+    public var backgroundColor: InkColorPreset?
+    public var borderColor: InkColorPreset?
+
+    private enum CodingKeys: String, CodingKey {
+        case fontSize
+        case isBold
+        case isItalic
+        case alignment
+        case textColor
+        case backgroundColor
+        case borderColor
+    }
+
+    public init(
+        fontSize: CGFloat = TextBoxStyle.defaultFontSize,
+        isBold: Bool = false,
+        isItalic: Bool = false,
+        alignment: TextBoxAlignment = .leading,
+        textColor: InkColorPreset = .black,
+        backgroundColor: InkColorPreset? = nil,
+        borderColor: InkColorPreset? = nil
+    ) {
+        self.fontSize = Self.clampedFontSize(fontSize)
+        self.isBold = isBold
+        self.isItalic = isItalic
+        self.alignment = alignment
+        self.textColor = textColor
+        self.backgroundColor = backgroundColor
+        self.borderColor = borderColor
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedFontSize = try container.decodeIfPresent(CGFloat.self, forKey: .fontSize) ?? Self.defaultFontSize
+        self.fontSize = Self.clampedFontSize(decodedFontSize)
+        self.isBold = try container.decodeIfPresent(Bool.self, forKey: .isBold) ?? false
+        self.isItalic = try container.decodeIfPresent(Bool.self, forKey: .isItalic) ?? false
+        self.alignment = try container.decodeIfPresent(TextBoxAlignment.self, forKey: .alignment) ?? .leading
+        self.textColor = try container.decodeIfPresent(InkColorPreset.self, forKey: .textColor) ?? .black
+        self.backgroundColor = try container.decodeIfPresent(InkColorPreset.self, forKey: .backgroundColor)
+        self.borderColor = try container.decodeIfPresent(InkColorPreset.self, forKey: .borderColor)
+    }
+
+    public static func clampedFontSize(_ value: CGFloat) -> CGFloat {
+        guard value.isFinite else { return defaultFontSize }
+        return Swift.min(Swift.max(value, fontSizeRange.lowerBound), fontSizeRange.upperBound)
+    }
+}
+
 /// Payload type for a `PageObject`.
 public enum PageObjectKind: Codable, Equatable, Hashable, Sendable {
     /// A vector geometric shape drawn with a chosen colour and stroke width.
@@ -78,6 +168,11 @@ public enum PageObjectKind: Codable, Equatable, Hashable, Sendable {
         targetNotebookID: UUID,
         fallbackTitle: String
     )
+    /// An inline-editable typed text card with whole-card typography and card appearance styling.
+    case textBox(
+        text: String,
+        style: TextBoxStyle
+    )
 }
 
 /// A placed object on an A4 page with unified move, 4-corner resize, and top-handle rotate geometry.
@@ -95,6 +190,38 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
     public var updatedAt: Date
 
     public static let minimumDimension: CGFloat = 24.0
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case x
+        case y
+        case width
+        case height
+        case rotation
+        case zIndex
+        case kind
+        case createdAt
+        case updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(UUID.self, forKey: .id)
+        let rawX = try container.decode(CGFloat.self, forKey: .x)
+        let rawY = try container.decode(CGFloat.self, forKey: .y)
+        let rawWidth = try container.decode(CGFloat.self, forKey: .width)
+        let rawHeight = try container.decode(CGFloat.self, forKey: .height)
+        let rawRotation = try container.decode(CGFloat.self, forKey: .rotation)
+        self.x = rawX.isFinite ? rawX : 0
+        self.y = rawY.isFinite ? rawY : 0
+        self.width = rawWidth.isFinite ? Swift.max(Self.minimumDimension, rawWidth) : Self.minimumDimension
+        self.height = rawHeight.isFinite ? Swift.max(Self.minimumDimension, rawHeight) : Self.minimumDimension
+        self.rotation = rawRotation.isFinite ? rawRotation : 0
+        self.zIndex = try container.decode(Int.self, forKey: .zIndex)
+        self.kind = try container.decode(PageObjectKind.self, forKey: .kind)
+        self.createdAt = try container.decode(Date.self, forKey: .createdAt)
+        self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+    }
 
     public var frame: CGRect {
         get { CGRect(x: x, y: y, width: width, height: height) }
@@ -255,7 +382,65 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
         )
     }
 
+    /// Creates a default-sized inline-editable text box card centered on an A4 page.
+    public static func defaultTextBox(
+        text: String = "",
+        style: TextBoxStyle = TextBoxStyle(),
+        zIndex: Int = 0,
+        pageSize: CGSize = PageGeometry.a4Size
+    ) -> PageObject {
+        let boxWidth: CGFloat = 260
+        let boxHeight: CGFloat = 110
+        let origin = CGPoint(
+            x: (pageSize.width - boxWidth) * 0.5,
+            y: (pageSize.height - boxHeight) * 0.38
+        )
+        return PageObject(
+            frame: CGRect(origin: origin, size: CGSize(width: boxWidth, height: boxHeight)),
+            rotation: 0,
+            zIndex: zIndex,
+            kind: .textBox(text: text, style: style)
+        )
+    }
+
     // MARK: - Pure Geometric Transforms & Hit Testing
+
+    /// Returns the four corner points of this object in A4 page coordinates, accounting for `rotation` around `center`.
+    public func rotatedCorners() -> [CGPoint] {
+        let halfW = width * 0.5
+        let halfH = height * 0.5
+        let cosA = cos(rotation)
+        let sinA = sin(rotation)
+        let localCorners = [
+            CGPoint(x: -halfW, y: -halfH),
+            CGPoint(x: halfW, y: -halfH),
+            CGPoint(x: halfW, y: halfH),
+            CGPoint(x: -halfW, y: halfH)
+        ]
+        return localCorners.map { local in
+            CGPoint(
+                x: center.x + local.x * cosA - local.y * sinA,
+                y: center.y + local.x * sinA + local.y * cosA
+            )
+        }
+    }
+
+    /// Returns the axis-aligned bounding box enclosing all four `rotatedCorners()` in A4 page coordinates.
+    public func rotatedBoundingBox() -> CGRect {
+        let corners = rotatedCorners()
+        guard let first = corners.first else { return frame }
+        var minX = first.x
+        var maxX = first.x
+        var minY = first.y
+        var maxY = first.y
+        for pt in corners.dropFirst() {
+            minX = Swift.min(minX, pt.x)
+            maxX = Swift.max(maxX, pt.x)
+            minY = Swift.min(minY, pt.y)
+            maxY = Swift.max(maxY, pt.y)
+        }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
 
     /// Returns `true` if `pagePoint` (in A4 page coordinates) falls inside this object's (potentially rotated) bounding box, expanded by `tolerance`.
     public func contains(pagePoint: CGPoint, tolerance: CGFloat = 6.0) -> Bool {
@@ -413,9 +598,37 @@ public struct PageObject: Identifiable, Codable, Equatable, Hashable, Sendable {
                 hasHeaderRow: header
             )
             copy.updatedAt = now
+        case .textBox(let text, var style):
+            style.textColor = newColor
+            copy.kind = .textBox(text: text, style: style)
+            copy.updatedAt = now
         case .image, .pageLink:
             break
         }
+        return copy
+    }
+
+    /// Updates the text content of a `.textBox` object.
+    public func withText(_ newText: String, now: Date = Date()) -> PageObject {
+        guard case .textBox(_, let style) = kind else {
+            return self
+        }
+        var copy = self
+        copy.kind = .textBox(text: newText, style: style)
+        copy.updatedAt = now
+        return copy
+    }
+
+    /// Updates the whole-card `TextBoxStyle` of a `.textBox` object (clamping `fontSize` to `TextBoxStyle.fontSizeRange`).
+    public func withTextBoxStyle(_ newStyle: TextBoxStyle, now: Date = Date()) -> PageObject {
+        guard case .textBox(let text, _) = kind else {
+            return self
+        }
+        var sanitized = newStyle
+        sanitized.fontSize = TextBoxStyle.clampedFontSize(newStyle.fontSize)
+        var copy = self
+        copy.kind = .textBox(text: text, style: sanitized)
+        copy.updatedAt = now
         return copy
     }
 

@@ -96,12 +96,13 @@ public struct PageEditorView: View {
                 }
                 viewModel.selectedObjectID = objectID
             },
-            onUpdateObjectLive: { updatedObject in
+            onUpdateObjectLive: { updatedObject, persistImmediately in
                 viewModel.updatePageObject(
                     updatedObject,
                     on: page.id,
                     in: section.id,
-                    notebookID: notebook.id
+                    notebookID: notebook.id,
+                    persistImmediately: persistImmediately
                 )
             },
             onReplaceAllObjects: { replacedObjects in
@@ -353,8 +354,19 @@ public struct PageEditorView: View {
                     .help("Paste copied strokes or objects onto this page")
                 }
 
-                // Insert Menu (Photos, Tables, Basic Shapes, Page Links)
+                // Insert Menu (Text Box, Photos, Tables, Basic Shapes, Page Links)
                 Menu {
+                    Button {
+                        viewModel.isLassoModeActive = false
+                        viewModel.insertTextBox(
+                            on: page.id,
+                            in: section.id,
+                            notebookID: notebook.id
+                        )
+                    } label: {
+                        Label("Text Box", systemImage: "character.textbox")
+                    }
+
                     Button {
                         isPhotoPickerPresented = true
                     } label: {

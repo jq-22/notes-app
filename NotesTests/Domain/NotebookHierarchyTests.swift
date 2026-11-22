@@ -7,6 +7,7 @@
 
 import Foundation
 import Testing
+import UIKit
 @testable import Notes
 
 @Suite("Domain — Notebook, Section, and Page Hierarchy")
@@ -129,5 +130,16 @@ struct NotebookHierarchyTests {
         let legacyPage = try JSONDecoder().decode(Page.self, from: legacyJSON)
         #expect(legacyPage.isBookmarked == false)
         #expect(legacyPage.title == "Legacy Page Without Bookmark")
+    }
+
+    @Test("PaperType.lined uses a non-hamburger lined-paper SF Symbol and all PaperType icons resolve on iPadOS")
+    func paperTypeSystemImageNamesResolve() {
+        #expect(PaperType.lined.systemImageName == "text.page")
+        #expect(PaperType.lined.systemImageName != "lines.measurement.horizontal")
+        #expect(PaperType.lined.systemImageName != "line.3.horizontal")
+
+        for paper in PaperType.allCases {
+            #expect(UIImage(systemName: paper.systemImageName) != nil)
+        }
     }
 }

@@ -31,7 +31,7 @@ public enum PaperType: String, Codable, CaseIterable, Identifiable, Sendable {
 
     public var systemImageName: String {
         switch self {
-        case .lined: return "lines.measurement.horizontal"
+        case .lined: return "text.page"
         case .squared: return "squareshape.split.3x3"
         case .blank: return "doc"
         }

@@ -36,6 +36,7 @@ public final class LibraryViewModel {
         willSet {
             if selectedPageID != newValue {
                 flushPendingDrawings()
+                flushPendingNotebooks()
                 selectedObjectID = nil
                 isLassoModeActive = false
             }
@@ -92,6 +93,9 @@ public final class LibraryViewModel {
 
     private var pendingDrawingByPageID: [UUID: Data] = [:]
     private var debounceSaveTasks: [UUID: Task<Void, Never>] = [:]
+    private var pendingNotebooksSaveTask: Task<Void, Never>?
+    private var pendingNotebooksRevisionPageIDs: Set<UUID> = []
+    private var hasPendingNotebooksSave: Bool = false
     private let autosaveDebounceNanoseconds: UInt64
 
     public static let scribbleEnabledDefaultsKey = "Notes.isScribbleToEraseEnabled"
@@ -204,10 +208,53 @@ public final class LibraryViewModel {
 
     public func saveNow() {
         flushPendingDrawings()
+        pendingNotebooksSaveTask?.cancel()
+        pendingNotebooksSaveTask = nil
+        let dirtyPages = pendingNotebooksRevisionPageIDs
+        pendingNotebooksRevisionPageIDs.removeAll()
+        hasPendingNotebooksSave = false
+        for pid in dirtyPages {
+            drawingRevisionByPageID[pid, default: 0] += 1
+        }
         do {
             try store.saveNotebooks(notebooks)
         } catch {
+            hasPendingNotebooksSave = true
             activeErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    /// Immediately writes any pending debounced notebook metadata edits (e.g. live text box typing) to `PageStore`.
+    public func flushPendingNotebooks() {
+        guard hasPendingNotebooksSave else { return }
+        pendingNotebooksSaveTask?.cancel()
+        pendingNotebooksSaveTask = nil
+        let dirtyPages = pendingNotebooksRevisionPageIDs
+        pendingNotebooksRevisionPageIDs.removeAll()
+        hasPendingNotebooksSave = false
+        for pid in dirtyPages {
+            drawingRevisionByPageID[pid, default: 0] += 1
+        }
+        do {
+            try store.saveNotebooks(notebooks)
+        } catch {
+            hasPendingNotebooksSave = true
+            activeErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    private func scheduleNotebooksAutosave(for pageID: UUID) {
+        hasPendingNotebooksSave = true
+        pendingNotebooksRevisionPageIDs.insert(pageID)
+        pendingNotebooksSaveTask?.cancel()
+
+        let delay = autosaveDebounceNanoseconds
+        pendingNotebooksSaveTask = Task { @MainActor [weak self] in
+            if delay > 0 {
+                try? await Task.sleep(nanoseconds: delay)
+            }
+            guard !Task.isCancelled else { return }
+            self?.flushPendingNotebooks()
         }
     }
 
@@ -706,6 +753,21 @@ public final class LibraryViewModel {
         return addPageObject(object, on: pageID, in: sectionID, notebookID: notebookID)
     }
 
+    /// Inserts an inline-editable `.textBox` card onto the target page and selects it immediately.
+    @discardableResult
+    public func insertTextBox(
+        text: String = "",
+        style: TextBoxStyle? = nil,
+        on pageID: UUID? = nil,
+        in sectionID: UUID? = nil,
+        notebookID: UUID? = nil
+    ) -> PageObject? {
+        isLassoModeActive = false
+        let resolvedStyle = style ?? TextBoxStyle()
+        let object = PageObject.defaultTextBox(text: text, style: resolvedStyle)
+        return addPageObject(object, on: pageID, in: sectionID, notebookID: notebookID)
+    }
+
     /// Navigates directly to a target page in any notebook and section.
     public func navigateToPage(pageID: UUID, sectionID: UUID, notebookID: UUID) {
         selectedNotebookID = notebookID
@@ -738,12 +800,14 @@ public final class LibraryViewModel {
         return inserted
     }
 
-    /// Updates an existing `PageObject` (move, resize, rotate, recolour, stroke width) on the specified page.
+    /// Updates an existing `PageObject` (move, resize, rotate, recolour, text, styling) on the specified page.
+    /// Pass `persistImmediately: false` during high-frequency live edits (typing/Scribble/dragging) to debounce disk writes.
     public func updatePageObject(
         _ updatedObject: PageObject,
         on pageID: UUID? = nil,
         in sectionID: UUID? = nil,
-        notebookID: UUID? = nil
+        notebookID: UUID? = nil,
+        persistImmediately: Bool = true
     ) {
         guard let targetPageID = pageID ?? selectedPageID,
               let indices = pageIndices(pageID: targetPageID, sectionID: sectionID, notebookID: notebookID) else {
@@ -753,8 +817,13 @@ public final class LibraryViewModel {
         notebooks[indices.notebook].sections[indices.section].pages[indices.page].updateObject(updatedObject, now: now)
         notebooks[indices.notebook].sections[indices.section].updatedAt = now
         notebooks[indices.notebook].updatedAt = now
-        drawingRevisionByPageID[targetPageID, default: 0] += 1
-        saveNow()
+        if persistImmediately {
+            pendingNotebooksRevisionPageIDs.remove(targetPageID)
+            drawingRevisionByPageID[targetPageID, default: 0] += 1
+            saveNow()
+        } else {
+            scheduleNotebooksAutosave(for: targetPageID)
+        }
     }
 
     /// Replaces the entire `[PageObject]` array on a page (used by Undo/Redo).
@@ -899,9 +968,11 @@ public final class LibraryViewModel {
             let rawBounds = payload.strokeBounds ?? CGRect(x: 160, y: 240, width: 180, height: 120)
             let safeW = Swift.max(PageObject.minimumDimension, rawBounds.width)
             let safeH = Swift.max(PageObject.minimumDimension, rawBounds.height)
+            let maxX = Swift.max(16, PageGeometry.a4Width - safeW - 16)
+            let maxY = Swift.max(16, PageGeometry.a4Height - safeH - 16)
             let offsetFrame = CGRect(
-                x: Swift.min(Swift.max(16, rawBounds.minX + 18), PageGeometry.a4Width - safeW - 16),
-                y: Swift.min(Swift.max(16, rawBounds.minY + 18), PageGeometry.a4Height - safeH - 16),
+                x: Swift.max(16, Swift.min(rawBounds.minX + 18, maxX)),
+                y: Swift.max(16, Swift.min(rawBounds.minY + 18, maxY)),
                 width: safeW,
                 height: safeH
             )
@@ -931,13 +1002,16 @@ public final class LibraryViewModel {
                 newKind = .image(assetID: newAssetID)
             }
 
-            let targetX = Swift.min(Swift.max(16, copiedObj.x + 18), PageGeometry.a4Width - copiedObj.width - 16)
-            let targetY = Swift.min(Swift.max(16, copiedObj.y + 18), PageGeometry.a4Height - copiedObj.height - 16)
+            let maxX = Swift.max(16, PageGeometry.a4Width - copiedObj.width - 16)
+            let maxY = Swift.max(16, PageGeometry.a4Height - copiedObj.height - 16)
+            let targetX = Swift.max(16, Swift.min(copiedObj.x + 18, maxX))
+            let targetY = Swift.max(16, Swift.min(copiedObj.y + 18, maxY))
+            let maxExistingZIndex = notebooks[indices.notebook].sections[indices.section].pages[indices.page].objects.map(\.zIndex).max() ?? 0
             let cloned = PageObject(
                 id: UUID(),
                 frame: CGRect(x: targetX, y: targetY, width: copiedObj.width, height: copiedObj.height),
                 rotation: copiedObj.rotation,
-                zIndex: notebooks[indices.notebook].sections[indices.section].pages[indices.page].objects.count + 1,
+                zIndex: maxExistingZIndex + 1,
                 kind: newKind
             )
             if let inserted = addPageObject(cloned, on: targetPageID, in: sectionID, notebookID: notebookID) {

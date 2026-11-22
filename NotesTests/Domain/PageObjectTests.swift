@@ -206,4 +206,157 @@ struct PageObjectTests {
             Issue.record("Expected pageLink kind")
         }
     }
+
+    @Test("TextBox PageObject creation, styling defaults, clamping, mutators, and recolouring")
+    func textBoxCreationStylingAndMutators() throws {
+        let defaultBox = PageObject.defaultTextBox(text: "System Overview")
+        #expect(defaultBox.usesLinearEndpointHandles == false)
+        #expect(defaultBox.width == 260)
+        #expect(defaultBox.height == 110)
+
+        guard case .textBox(let initialText, let initialStyle) = defaultBox.kind else {
+            Issue.record("Expected textBox kind")
+            return
+        }
+        #expect(initialText == "System Overview")
+        #expect(initialStyle.fontSize == 16.0)
+        #expect(initialStyle.isBold == false)
+        #expect(initialStyle.isItalic == false)
+        #expect(initialStyle.alignment == .leading)
+        #expect(initialStyle.textColor == .black)
+        #expect(initialStyle.backgroundColor == nil)
+        #expect(initialStyle.borderColor == nil)
+
+        // Font size clamping in init and withTextBoxStyle
+        let clampedLow = TextBoxStyle(fontSize: 2.0)
+        let clampedHigh = TextBoxStyle(fontSize: 200.0)
+        #expect(clampedLow.fontSize == 10.0)
+        #expect(clampedHigh.fontSize == 72.0)
+
+        let t1 = Date(timeIntervalSince1970: 5000)
+        let updatedText = defaultBox.withText("Updated Body", now: t1)
+        #expect(updatedText.updatedAt == t1)
+        if case .textBox(let text, _) = updatedText.kind {
+            #expect(text == "Updated Body")
+        }
+
+        let customStyle = TextBoxStyle(
+            fontSize: 24,
+            isBold: true,
+            isItalic: true,
+            alignment: .center,
+            textColor: .blue,
+            backgroundColor: .yellow,
+            borderColor: .orange
+        )
+        let styledBox = updatedText.withTextBoxStyle(customStyle, now: t1)
+        if case .textBox(let text, let style) = styledBox.kind {
+            #expect(text == "Updated Body")
+            #expect(style == customStyle)
+        } else {
+            Issue.record("Expected textBox kind")
+        }
+
+        let recoloredBox = styledBox.recolored(to: .purple, now: t1)
+        if case .textBox(_, let style) = recoloredBox.kind {
+            #expect(style.textColor == .purple)
+            #expect(style.backgroundColor == .yellow)
+            #expect(style.borderColor == .orange)
+        }
+
+        // Resilient Codable decoding from partial TextBoxStyle JSON
+        let partialStyleJSON = Data("{}".utf8)
+        let decodedDefaultStyle = try JSONDecoder().decode(TextBoxStyle.self, from: partialStyleJSON)
+        #expect(decodedDefaultStyle == TextBoxStyle())
+    }
+
+    @Test("TextBox move, 4-corner resize, rotate, rotatedCorners/BoundingBox, and Page Codable round-trip")
+    func textBoxGeometryAndCodableRoundTrip() throws {
+        let style = TextBoxStyle(
+            fontSize: 20,
+            isBold: true,
+            isItalic: false,
+            alignment: .trailing,
+            textColor: .red,
+            backgroundColor: .white,
+            borderColor: .black
+        )
+        let box = PageObject(
+            frame: CGRect(x: 100, y: 120, width: 200, height: 100),
+            rotation: 0,
+            kind: .textBox(text: "Key Idea", style: style)
+        )
+
+        // Move
+        let moved = box.moved(by: CGSize(width: 20, height: -10))
+        #expect(moved.frame == CGRect(x: 120, y: 110, width: 200, height: 100))
+
+        // Resize bottomRight keeps topLeft anchored
+        let resized = box.resized(corner: .bottomRight, pageDelta: CGSize(width: 50, height: 40))
+        #expect(abs(resized.frame.minX - 100) < 0.001)
+        #expect(abs(resized.frame.minY - 120) < 0.001)
+        #expect(abs(resized.width - 250) < 0.001)
+        #expect(abs(resized.height - 140) < 0.001)
+
+        // Rotate 90 degrees clockwise around center (200, 170)
+        let rotated = box.rotated(toward: CGPoint(x: 300, y: 170))
+        #expect(abs(rotated.rotation - (.pi * 0.5)) < 0.001)
+        // Rotated hit-testing: point along rotated vertical span (200, 260) is inside 200-wide rotated box
+        #expect(rotated.contains(pagePoint: CGPoint(x: 200, y: 260), tolerance: 0))
+        #expect(!rotated.contains(pagePoint: CGPoint(x: 290, y: 170), tolerance: 0))
+
+        let corners = rotated.rotatedCorners()
+        #expect(corners.count == 4)
+        let bbox = rotated.rotatedBoundingBox()
+        #expect(abs(bbox.width - 100) < 0.01)
+        #expect(abs(bbox.height - 200) < 0.01)
+
+        // Codable round-trip inside a Page alongside other kinds
+        let shape = PageObject.defaultBasicShape(.rectangle)
+        let page = Page(title: "Mixed", objects: [shape, rotated])
+        let encoded = try JSONEncoder().encode(page)
+        let decoded = try JSONDecoder().decode(Page.self, from: encoded)
+        #expect(decoded == page)
+    }
+
+    @Test("Codable resilience: unknown TextBoxAlignment falls back to .leading, NaN fontSize defaults to 16, and degenerate PageObject sizes clamp to minimumDimension")
+    func codableResilienceAndDegenerateGuards() throws {
+        // 1. Unknown TextBoxAlignment raw value falls back to .leading
+        let unknownAlignmentJSON = Data(#"{"fontSize": 18, "alignment": "justified"}"#.utf8)
+        let decodedStyle = try JSONDecoder().decode(TextBoxStyle.self, from: unknownAlignmentJSON)
+        #expect(decodedStyle.alignment == .leading)
+        #expect(decodedStyle.fontSize == 18)
+
+        // 2. Non-finite fontSize (NaN / infinity) safely falls back to defaultFontSize
+        let nanStyle = TextBoxStyle(fontSize: .nan)
+        #expect(nanStyle.fontSize == TextBoxStyle.defaultFontSize)
+        #expect(TextBoxStyle.clampedFontSize(.infinity) == TextBoxStyle.defaultFontSize)
+        #expect(TextBoxStyle.clampedFontSize(-.infinity) == TextBoxStyle.defaultFontSize)
+
+        // 3. Degenerate negative/zero PageObject dimensions in JSON clamp to >= minimumDimension
+        let objectID = UUID()
+        let degenerateJSON = """
+        {
+            "id": "\(objectID.uuidString)",
+            "x": 40,
+            "y": 50,
+            "width": -20,
+            "height": 0,
+            "rotation": 0,
+            "zIndex": 1,
+            "kind": {
+                "textBox": {
+                    "text": "Clamped",
+                    "style": {}
+                }
+            },
+            "createdAt": 1000,
+            "updatedAt": 1000
+        }
+        """.data(using: .utf8)!
+        let decodedObj = try JSONDecoder().decode(PageObject.self, from: degenerateJSON)
+        #expect(decodedObj.id == objectID)
+        #expect(decodedObj.width >= PageObject.minimumDimension)
+        #expect(decodedObj.height >= PageObject.minimumDimension)
+    }
 }

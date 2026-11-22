@@ -70,4 +70,54 @@ struct LassoSelectionTests {
         ])
         #expect(tinyLasso.isValidLoop == false)
     }
+
+    @Test("LassoPolygon selects unrotated, rotated, and mixed TextBox objects accurately")
+    func lassoSelectsTextBoxesIncludingRotated() {
+        let insideBox = PageObject(
+            frame: CGRect(x: 120, y: 140, width: 120, height: 80),
+            rotation: 0,
+            kind: .textBox(text: "Inside", style: TextBoxStyle())
+        )
+        let outsideBox = PageObject(
+            frame: CGRect(x: 420, y: 500, width: 120, height: 80),
+            rotation: 0,
+            kind: .textBox(text: "Outside", style: TextBoxStyle())
+        )
+
+        // Long thin textBox centered at (340, 200) rotated by 90 degrees so its corners extend vertically to y=80 and y=320.
+        // The lasso covers (100, 100) to (310, 300): center (340, 200) is outside, unrotated frame corners at x=220 and x=460,
+        // wait - let's test a rotated box whose rotated corners fall inside the lasso while unrotated frame corners fall outside!
+        // Unrotated frame: center (200, 100), width 240, height 40 -> unrotated corners are at x=80..320, y=80..120 (all y <= 120).
+        // Lasso covers x=150..250, y=130..250 (below y=120, so center (200,100) AND all 4 unrotated corners are OUTSIDE).
+        // Rotating by 90 degrees puts two rotated corners at (180, 220) and (220, 220) — strictly INSIDE the lasso!
+        let rotatedBox = PageObject(
+            frame: CGRect(x: 80, y: 80, width: 240, height: 40),
+            rotation: .pi * 0.5,
+            kind: .textBox(text: "Rotated", style: TextBoxStyle())
+        )
+
+        let rotatedLasso = LassoPolygon(points: [
+            CGPoint(x: 150, y: 130),
+            CGPoint(x: 250, y: 130),
+            CGPoint(x: 250, y: 250),
+            CGPoint(x: 150, y: 250)
+        ])
+        #expect(rotatedLasso.selectedObjectIDs(from: [rotatedBox]) == [rotatedBox.id])
+
+        // Mixed selection: stroke + textBox + basicShape
+        let mixedLasso = LassoPolygon(points: [
+            CGPoint(x: 90, y: 90),
+            CGPoint(x: 320, y: 90),
+            CGPoint(x: 320, y: 320),
+            CGPoint(x: 90, y: 320)
+        ])
+        let shape = PageObject(
+            frame: CGRect(x: 160, y: 240, width: 60, height: 60),
+            kind: .basicShape(kind: .circle, strokeColor: .blue, strokeWidth: 2)
+        )
+        let stroke = [CGPoint(x: 110, y: 110), CGPoint(x: 140, y: 140), CGPoint(x: 170, y: 170)]
+
+        #expect(mixedLasso.selectedStrokeIndices(from: [stroke]) == [0])
+        #expect(mixedLasso.selectedObjectIDs(from: [insideBox, outsideBox, shape]) == [insideBox.id, shape.id])
+    }
 }

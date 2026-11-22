@@ -98,13 +98,7 @@ public struct LassoPolygon: Equatable, Sendable {
                 selected.insert(object.id)
                 continue
             }
-            let rect = object.frame
-            let corners = [
-                CGPoint(x: rect.minX, y: rect.minY),
-                CGPoint(x: rect.maxX, y: rect.minY),
-                CGPoint(x: rect.minX, y: rect.maxY),
-                CGPoint(x: rect.maxX, y: rect.maxY)
-            ]
+            let corners = object.rotatedCorners()
             let insideCorners = corners.filter { contains($0) }.count
             if insideCorners >= 2 {
                 selected.insert(object.id)

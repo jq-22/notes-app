@@ -470,4 +470,119 @@ struct LibraryViewModelTests {
         vm.isBookmarkFilterActive = true
         #expect(vm.isBookmarkFilterActive == true)
     }
+
+    @Test("TextBox insert, debounced live edit, flush/save, duplicate, and cross-notebook copy/cut/paste")
+    func textBoxLifecycleDebouncedSaveAndClipboard() throws {
+        let store = InMemoryPageStore()
+        let vm = LibraryViewModel(store: store, autosaveDebounceNanoseconds: 500_000_000)
+
+        let nb1 = vm.createNotebook(title: "Text Notebook")
+        let sec1ID = try #require(nb1.sections.first?.id)
+        let page1ID = try #require(nb1.sections.first?.pages.first?.id)
+        let page2 = try #require(vm.createPage(in: sec1ID, notebookID: nb1.id, afterPageID: page1ID, title: "Page 2"))
+        vm.selectedPageID = page1ID
+
+        // 1. Insert TextBox selects it and clears Lasso mode
+        vm.isLassoModeActive = true
+        let inserted = try #require(vm.insertTextBox(text: "Initial", on: page1ID, in: sec1ID, notebookID: nb1.id))
+        #expect(vm.selectedObjectID == inserted.id)
+        #expect(vm.isLassoModeActive == false)
+        #expect(store.storedNotebooks.first?.sections.first?.pages.first?.objects.count == 1)
+
+        // 2. Live update with persistImmediately: false updates in-memory without immediate disk write, then flushes on page change
+        let editedStyle = TextBoxStyle(
+            fontSize: 22,
+            isBold: true,
+            isItalic: true,
+            alignment: .center,
+            textColor: .blue,
+            backgroundColor: .yellow,
+            borderColor: .orange
+        )
+        let liveUpdated = inserted.withText("Live Typed Text").withTextBoxStyle(editedStyle)
+        vm.updatePageObject(liveUpdated, on: page1ID, in: sec1ID, notebookID: nb1.id, persistImmediately: false)
+
+        // In-memory state is updated immediately
+        if case .textBox(let text, let style) = vm.selectedPage?.objects.first?.kind {
+            #expect(text == "Live Typed Text")
+            #expect(style == editedStyle)
+        } else {
+            Issue.record("Expected updated textBox in memory")
+        }
+        // Store still has "Initial" until flushed
+        if case .textBox(let persistedText, _) = store.storedNotebooks.first?.sections.first?.pages.first?.objects.first?.kind {
+            #expect(persistedText == "Initial")
+        }
+
+        // Switching pages flushes pending metadata edits
+        vm.selectedPageID = page2.id
+        if case .textBox(let flushedText, let flushedStyle) = store.storedNotebooks.first?.sections.first?.pages.first?.objects.first?.kind {
+            #expect(flushedText == "Live Typed Text")
+            #expect(flushedStyle == editedStyle)
+        } else {
+            Issue.record("Expected flushed textBox in store")
+        }
+
+        // 3. Duplicate TextBox
+        vm.selectedPageID = page1ID
+        let dup = try #require(vm.duplicatePageObject(id: inserted.id, on: page1ID, in: sec1ID, notebookID: nb1.id))
+        #expect(dup.id != inserted.id)
+        #expect(abs(dup.x - (liveUpdated.x + 18)) < 0.001)
+        #expect(abs(dup.y - (liveUpdated.y + 18)) < 0.001)
+        #expect(dup.kind == liveUpdated.kind)
+
+        // 4. Copy single TextBox and paste onto Page 2 in another notebook
+        vm.copySingleObjectToClipboard(id: inserted.id, on: page1ID, in: sec1ID, notebookID: nb1.id)
+        #expect(vm.canPasteFromClipboard == true)
+
+        let nb2 = vm.createNotebook(title: "Destination Notebook")
+        let sec2ID = try #require(nb2.sections.first?.id)
+        let page2Nb2ID = try #require(nb2.sections.first?.pages.first?.id)
+
+        let pasted = vm.pasteFromClipboard(on: page2Nb2ID, in: sec2ID, notebookID: nb2.id)
+        #expect(pasted.count == 1)
+        #expect(pasted[0].id != inserted.id)
+        #expect(pasted[0].kind == liveUpdated.kind)
+
+        // 5. Cut mixed (TextBox + strokes) from Page 1 and paste onto Page 2
+        let strokeData = Data([0xAA, 0xBB, 0xCC])
+        vm.copyObjectsAndStrokesToClipboard(
+            strokeDrawingData: strokeData,
+            strokeBounds: CGRect(x: 40, y: 60, width: 120, height: 80),
+            objectIDs: [dup.id],
+            on: page1ID,
+            in: sec1ID,
+            notebookID: nb1.id
+        )
+        // Simulate Cut removal
+        let remaining = (vm.notebooks[0].sections[0].pages[0].objects).filter { $0.id != dup.id }
+        vm.setPageObjects(remaining, on: page1ID, in: sec1ID, notebookID: nb1.id)
+        #expect(vm.notebooks[0].sections[0].pages[0].objects.count == 1)
+
+        let cutPasted = vm.pasteFromClipboard(on: page2.id, in: sec1ID, notebookID: nb1.id)
+        #expect(cutPasted.count == 2) // 1 strokeGroup + 1 textBox
+        #expect(cutPasted.contains(where: { if case .textBox(let t, _) = $0.kind { return t == "Live Typed Text" }; return false }))
+
+        // 6. Wide TextBox paste clamps safely to >= 16pt instead of going negative
+        let wideBox = PageObject(
+            frame: CGRect(x: 10, y: 100, width: PageGeometry.a4Width, height: 100),
+            kind: .textBox(text: "Wide", style: TextBoxStyle())
+        )
+        vm.addPageObject(wideBox, on: page1ID, in: sec1ID, notebookID: nb1.id)
+        vm.copySingleObjectToClipboard(id: wideBox.id, on: page1ID, in: sec1ID, notebookID: nb1.id)
+        let pastedWide = vm.pasteFromClipboard(on: page2.id, in: sec1ID, notebookID: nb1.id)
+        #expect(pastedWide.count == 1)
+        #expect(pastedWide[0].x >= 16)
+
+        // 7. Pasting onto a page with a high-zIndex object assigns strictly higher zIndex
+        let highZObj = PageObject(
+            frame: CGRect(x: 50, y: 50, width: 100, height: 100),
+            zIndex: 50,
+            kind: .basicShape(kind: .rectangle, strokeColor: .black, strokeWidth: 2)
+        )
+        vm.addPageObject(highZObj, on: page2.id, in: sec1ID, notebookID: nb1.id)
+        let pastedHighZ = vm.pasteFromClipboard(on: page2.id, in: sec1ID, notebookID: nb1.id)
+        #expect(pastedHighZ.count == 1)
+        #expect(pastedHighZ[0].zIndex > 50)
+    }
 }

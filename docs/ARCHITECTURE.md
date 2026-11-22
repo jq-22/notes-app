@@ -12,7 +12,7 @@ Notes/
   Domain/                             Pure Swift models & logic (no UI or persistence imports)
     PaperType.swift                   PaperType (lined, squared, blank) & PageGeometry (A4 595x842 pt constants)
     Page.swift                        Page metadata value type (UUID, title, optional PaperType override, [PageObject], timestamps)
-    PageObject.swift                  PageObject model (UUID, frame, rotation, kind: basicShape, image, strokeGroup, table, pageLink), resize/rotate geometry, hit-testing
+    PageObject.swift                  PageObject model (UUID, frame, rotation, kind: basicShape, image, strokeGroup, table, pageLink, textBox), TextBoxStyle, resize/rotate geometry, hit-testing
     LassoSelection.swift              LassoPolygon ray-casting point-in-polygon, ActiveLassoSelection, CanvasClipboardPayload
     ShapeLibraryItem.swift            ShapeLibraryItem value type (UUID, notebookID, label, strokeDrawingData, dimensions, timestamps)
     NoteSection.swift                 Section value type holding ordered [Page] & pure move/insert/delete logic
@@ -32,10 +32,11 @@ Notes/
       LibraryViewModel.swift          @Observable @MainActor state, CRUD, PageObjects/Tables/PageLinks/clipboard/ShapeLibrary management, debounced autosave, & error surfacing
       LibraryRootView.swift           3-column NavigationSplitView (Notebooks -> Sections & Pages -> Detail) + multi-page selection
       PageThumbnailView.swift         A4 aspect-ratio sidebar thumbnail showing paper pattern, live PKDrawing preview, & page index
-      PagePDFExporter.swift           Multi-page A4 vector PDF exporter rendering paper background + PKDrawing strokes + PageObjects (shapes, images, tables, page links)
+      PagePDFExporter.swift           Multi-page A4 vector PDF exporter rendering paper background + PKDrawing strokes + PageObjects (shapes, images, tables, page links, text boxes)
     PageEditor/
       PaperBackgroundView.swift       SwiftUI Canvas drawing lined/squared/blank background layer (never touches ink)
-      PageObjectsOverlayView.swift    Interactive overlay for PageObjects (corner resize dots, rotation handle, line end-bars, tables, page link badges, live move)
+      TextBoxEditorView.swift         Shared TextBox typography/layout helpers, SwiftUI TextBoxContentView, and inline UITextView + UIScribbleInteraction editor
+      PageObjectsOverlayView.swift    Interactive overlay for PageObjects (corner resize dots, rotation handle, line end-bars, tables, page link badges, text box styling & perimeter move ring)
       PageLinkPickerSheet.swift       Searchable sheet to browse and select any page across notebooks to insert a permanent page link
       LassoSelectionOverlayView.swift Freehand lasso overlay (dotted path tracing, selection drag, floating toolbar with Recolour, Copy, Cut, Convert, Save to Library, Delete)
       ShapeLibraryPopoverView.swift   Reusable shape library browser with notebook switcher, PNG preview cards, tap to place, and context menu delete
@@ -62,8 +63,8 @@ NotesTests/
   Persistence/
     FilePageStoreTests.swift          Unit tests for FilePageStore round-trip, drawing separation, asset storage, shape library lifecycle, and error paths
   Features/
-    LibraryViewModelTests.swift       Unit tests for LibraryViewModel CRUD, PageObjects, tables, page links, cross-notebook clipboard copy/paste, shape library lifecycle, and error surfacing
-```
+    LibraryViewModelTests.swift       Unit tests for LibraryViewModel CRUD, PageObjects, tables, page links, text boxes, cross-notebook clipboard copy/paste, shape library lifecycle, and error surfacing
+    PagePDFExporterTests.swift        Unit tests for A4 vector PDF export and TextBox rendering via PDFKit
 ```
 
 ## Dependency Direction

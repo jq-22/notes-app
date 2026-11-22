@@ -35,7 +35,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
     public let assetDataProvider: (UUID) -> Data?
     public let onDrawingChanged: (Data) -> Void
     public let onSelectObject: (UUID?) -> Void
-    public let onUpdateObjectLive: (PageObject) -> Void
+    public let onUpdateObjectLive: (PageObject, Bool) -> Void
     public let onReplaceAllObjects: ([PageObject]) -> Void
     public let onCopyObject: (UUID) -> Void
     public let onCopyLassoPayload: (Data?, CGRect?, Set<UUID>) -> Void
@@ -75,7 +75,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         assetDataProvider: @escaping (UUID) -> Data? = { _ in nil },
         onDrawingChanged: @escaping (Data) -> Void,
         onSelectObject: @escaping (UUID?) -> Void = { _ in },
-        onUpdateObjectLive: @escaping (PageObject) -> Void = { _ in },
+        onUpdateObjectLive: @escaping (PageObject, Bool) -> Void = { _, _ in },
         onReplaceAllObjects: @escaping ([PageObject]) -> Void = { _ in },
         onCopyObject: @escaping (UUID) -> Void = { _ in },
         onCopyLassoPayload: @escaping (Data?, CGRect?, Set<UUID>) -> Void = { _, _, _ in },
@@ -139,15 +139,11 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             coordinator?.handleViewportSizeChanged(newSize)
         }
         scrollView.isTouchOverSelectedObject = { [weak coordinator = context.coordinator] pointInPage in
-            guard let coordinator,
-                  let selectedID = coordinator.parent.selectedObjectID,
-                  let selectedObj = coordinator.parent.pageObjects.first(where: { $0.id == selectedID })
-            else { return false }
-            return selectedObj.contains(pagePoint: pointInPage, tolerance: 44.0)
+            coordinator?.isPointOverSelectedObjectOrToolbar(pointInPage) ?? false
         }
 
         // Page container at A4 portrait points (595 x 842)
-        let pageContainer = UIView(frame: CGRect(origin: .zero, size: PageGeometry.a4Size))
+        let pageContainer = PageContainerView(frame: CGRect(origin: .zero, size: PageGeometry.a4Size))
         pageContainer.backgroundColor = UIColor.systemBackground
         pageContainer.layer.cornerRadius = Theme.CornerRadius.page
         pageContainer.layer.borderWidth = 1.0
@@ -167,14 +163,17 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         pageContainer.addSubview(paperHost.view)
 
         // 2. PageObjects overlay layer (Basic Shapes, Images, Library/Stroke objects + unified handles)
+        // Expand hosting frame by 80pt on each side (with safeAreaRegions = []) so handles/toolbars extending
+        // outside A4 bounds (e.g. top-edge rotate handle above y = 0) remain hit-testable without shifting coordinates.
         let objectsHost = UIHostingController(rootView: context.coordinator.makeObjectsOverlayView())
-        objectsHost.view.frame = pageContainer.bounds
-        objectsHost.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        objectsHost.safeAreaRegions = []
+        objectsHost.view.frame = pageContainer.bounds.insetBy(dx: -80, dy: -80)
+        objectsHost.view.autoresizingMask = []
         objectsHost.view.backgroundColor = .clear
         objectsHost.view.isOpaque = false
-        objectsHost.view.layer.cornerRadius = Theme.CornerRadius.page
         objectsHost.view.clipsToBounds = false
         objectsHost.view.isUserInteractionEnabled = isInteractiveObjectMode
+        pageContainer.objectsView = objectsHost.view
         pageContainer.addSubview(objectsHost.view)
 
         // 3. Transparent PKCanvasView layer on top of paper
@@ -227,6 +226,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         singleFingerTap.numberOfTapsRequired = 1
         singleFingerTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         singleFingerTap.cancelsTouchesInView = false
+        singleFingerTap.delegate = context.coordinator
         singleFingerTap.require(toFail: doubleTap)
         scrollView.addGestureRecognizer(singleFingerTap)
 
@@ -236,6 +236,8 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         context.coordinator.objectsHostingController = objectsHost
         context.coordinator.lassoHostingController = lassoHost
         context.coordinator.canvasView = canvasView
+        context.coordinator.singleFingerTapRecognizer = singleFingerTap
+        context.coordinator.previousSelectedObjectID = selectedObjectID
 
         context.coordinator.loadPageIfNeeded(pageID: pageID, data: initialDrawingData, objects: pageObjects)
         context.coordinator.syncObjectsLayerInteraction(isInteractive: isInteractiveObjectMode, isLassoActive: isLassoModeActive)
@@ -254,11 +256,22 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             displayScale: effectiveScale
         )
         context.coordinator.loadPageIfNeeded(pageID: pageID, data: initialDrawingData, objects: pageObjects)
+        if context.coordinator.shouldFlushTextBoxBeforeExternalChange(
+            currentObjects: pageObjects,
+            selectedObjectID: selectedObjectID
+        ) {
+            context.coordinator.textBoxUndoBridge.flushPendingEditIfNeeded()
+        }
         context.coordinator.recordExternalObjectAdditionOrDeletionIfNeeded(currentObjects: pageObjects)
         if !isLassoModeActive && context.coordinator.activeLassoSelection != nil {
             context.coordinator.activeLassoSelection = nil
         }
+        if context.coordinator.previousSelectedObjectID != nil && selectedObjectID == nil {
+            context.coordinator.pageContainerView?.endEditing(true)
+        }
+        context.coordinator.previousSelectedObjectID = selectedObjectID
         context.coordinator.objectsHostingController?.rootView = context.coordinator.makeObjectsOverlayView()
+        context.coordinator.objectsHostingController?.view.setNeedsLayout()
         context.coordinator.lassoHostingController?.rootView = context.coordinator.makeLassoOverlayView()
         context.coordinator.syncObjectsLayerInteraction(isInteractive: isInteractiveObjectMode, isLassoActive: isLassoModeActive)
         if let canvasView = context.coordinator.canvasView {
@@ -274,7 +287,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
     // MARK: - Coordinator
 
     @MainActor
-    public final class Coordinator: NSObject, UIScrollViewDelegate, PKCanvasViewDelegate, UIPencilInteractionDelegate {
+    public final class Coordinator: NSObject, UIScrollViewDelegate, PKCanvasViewDelegate, UIPencilInteractionDelegate, UIGestureRecognizerDelegate {
         var parent: PencilCanvasScrollView
         weak var scrollView: CenteringScrollView?
         weak var pageContainerView: UIView?
@@ -282,11 +295,15 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         var objectsHostingController: UIHostingController<PageObjectsOverlayView>?
         var lassoHostingController: UIHostingController<LassoSelectionOverlayView>?
         weak var canvasView: PKCanvasView?
+        weak var singleFingerTapRecognizer: UITapGestureRecognizer?
+        var previousSelectedObjectID: UUID?
 
         var activeLassoSelection: ActiveLassoSelection?
+        let textBoxUndoBridge = TextBoxUndoBridge()
         private var currentLoadedPageID: UUID?
         private var isProgrammaticDrawingUpdate = false
         private var isProgrammaticObjectsUpdate = false
+        private var didRegisterObjectUndoInCurrentRunLoop = false
         private var previousDrawingSnapshot = PKDrawing()
         private var previousObjectsSnapshot: [PageObject] = []
         private var lastAppliedToolState: DrawingToolState?
@@ -303,26 +320,53 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             self.lastHandledUndoTriggerCount = parent.undoTriggerCount
             self.lastHandledRedoTriggerCount = parent.redoTriggerCount
             self.previousObjectsSnapshot = parent.pageObjects
+            super.init()
+            self.textBoxUndoBridge.onUncommittedEditStateChanged = { [weak self] in
+                guard let self, let canvasView = self.canvasView else { return }
+                self.notifyUndoState(for: canvasView)
+            }
+        }
+
+        func isPointOverSelectedObjectOrToolbar(_ pointInPage: CGPoint) -> Bool {
+            guard let selectedID = parent.selectedObjectID,
+                  let selectedObj = parent.pageObjects.first(where: { $0.id == selectedID }) else {
+                return false
+            }
+            if selectedObj.contains(pagePoint: pointInPage, tolerance: 48.0) {
+                return true
+            }
+            return PageObjectsOverlayView.estimatedToolbarRect(for: selectedObj).contains(pointInPage)
+        }
+
+        func shouldFlushTextBoxBeforeExternalChange(currentObjects: [PageObject], selectedObjectID: UUID?) -> Bool {
+            guard textBoxUndoBridge.hasUncommittedEdit else { return false }
+            return currentObjects.count != previousObjectsSnapshot.count || selectedObjectID != previousSelectedObjectID
         }
 
         func makeObjectsOverlayView() -> PageObjectsOverlayView {
             let interactive = parent.selectedObjectID != nil
+            let pageID = parent.pageID
             return PageObjectsOverlayView(
+                pageID: pageID,
                 objects: parent.pageObjects,
                 selectedObjectID: parent.selectedObjectID,
                 isInteractive: interactive,
+                textBoxUndoBridge: textBoxUndoBridge,
                 assetDataProvider: parent.assetDataProvider,
                 onSelectObject: { [weak self] selectedID in
                     self?.parent.onSelectObject(selectedID)
                 },
-                onUpdateObjectLive: { [weak self] updatedObject in
+                onUpdateObjectLive: { [weak self] updatedObject, persistImmediately in
                     guard let self else { return }
                     self.isProgrammaticObjectsUpdate = true
-                    self.parent.onUpdateObjectLive(updatedObject)
+                    self.parent.onUpdateObjectLive(updatedObject, persistImmediately)
                     self.isProgrammaticObjectsUpdate = false
                 },
                 onCommitObjectsChange: { [weak self] before, after in
-                    self?.registerUndoForObjectChange(from: before, to: after, actionName: "Modify Object")
+                    self?.registerUndoForObjectChange(pageID: pageID, from: before, to: after, actionName: "Modify Object")
+                },
+                onCommitTextBoxEdit: { [weak self] editPageID, objectID, before, after in
+                    self?.commitTextBoxEdit(pageID: editPageID, objectID: objectID, from: before, to: after)
                 },
                 onCopyObject: { [weak self] objectID in
                     self?.parent.onCopyObject(objectID)
@@ -406,7 +450,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 combinedBounds = combinedBounds.union(strokes[idx].renderBounds)
             }
             for obj in parent.pageObjects where hitObjectIDs.contains(obj.id) {
-                combinedBounds = combinedBounds.union(obj.frame)
+                combinedBounds = combinedBounds.union(obj.rotatedBoundingBox())
             }
 
             guard !combinedBounds.isNull, !combinedBounds.isEmpty else {
@@ -446,7 +490,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 isProgrammaticObjectsUpdate = true
                 parent.onReplaceAllObjects(newObjects)
                 isProgrammaticObjectsUpdate = false
-                registerUndoForObjectChange(from: oldObjects, to: newObjects, actionName: "Move Selection")
+                registerUndoForObjectChange(pageID: parent.pageID, from: oldObjects, to: newObjects, actionName: "Move Selection")
             }
 
             activeLassoSelection?.selectionBounds = selection.selectionBounds.offsetBy(dx: delta.width, dy: delta.height)
@@ -500,7 +544,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 isProgrammaticObjectsUpdate = true
                 parent.onReplaceAllObjects(newObjects)
                 isProgrammaticObjectsUpdate = false
-                registerUndoForObjectChange(from: oldObjects, to: newObjects, actionName: "Recolour Selection")
+                registerUndoForObjectChange(pageID: parent.pageID, from: oldObjects, to: newObjects, actionName: "Recolour Selection")
             }
             refreshLassoHostingView()
         }
@@ -566,7 +610,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 isProgrammaticObjectsUpdate = true
                 parent.onReplaceAllObjects(newObjects)
                 isProgrammaticObjectsUpdate = false
-                registerUndoForObjectChange(from: oldObjects, to: newObjects, actionName: "Delete Selection")
+                registerUndoForObjectChange(pageID: parent.pageID, from: oldObjects, to: newObjects, actionName: "Delete Selection")
             }
 
             activeLassoSelection = nil
@@ -610,20 +654,45 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 let before = previousObjectsSnapshot
                 let after = currentObjects
                 previousObjectsSnapshot = currentObjects
-                registerUndoForObjectChange(from: before, to: after, actionName: "Object Change")
+                registerUndoForObjectChange(pageID: parent.pageID, from: before, to: after, actionName: "Object Change")
             } else {
                 previousObjectsSnapshot = currentObjects
             }
         }
 
-        private func registerUndoForObjectChange(
+        func commitTextBoxEdit(
+            pageID: UUID,
+            objectID: UUID,
+            from oldObjects: [PageObject],
+            to newObjects: [PageObject]
+        ) {
+            guard pageID == currentLoadedPageID else { return }
+            guard parent.pageObjects.contains(where: { $0.id == objectID }) else { return }
+            registerUndoForObjectChange(pageID: pageID, from: oldObjects, to: newObjects, actionName: "Edit Text")
+        }
+
+        func registerUndoForObjectChange(
+            pageID: UUID,
             from oldObjects: [PageObject],
             to newObjects: [PageObject],
             actionName: String
         ) {
+            guard pageID == currentLoadedPageID else { return }
             previousObjectsSnapshot = newObjects
-            guard let canvasView, oldObjects != newObjects else { return }
-            canvasView.undoManager?.registerUndo(withTarget: self) { coordinator in
+            guard let canvasView, let undoManager = canvasView.undoManager, oldObjects != newObjects else { return }
+            if didRegisterObjectUndoInCurrentRunLoop && undoManager.groupsByEvent && undoManager.groupingLevel == 1 {
+                // Split distinct logical object changes (e.g. flushed text edit followed by Delete/Style/Handle drag)
+                // occurring within the same RunLoop turn into separate Undo steps.
+                undoManager.endUndoGrouping()
+                undoManager.beginUndoGrouping()
+            }
+            if !didRegisterObjectUndoInCurrentRunLoop {
+                didRegisterObjectUndoInCurrentRunLoop = true
+                DispatchQueue.main.async { [weak self] in
+                    self?.didRegisterObjectUndoInCurrentRunLoop = false
+                }
+            }
+            undoManager.registerUndo(withTarget: self) { coordinator in
                 MainActor.assumeIsolated {
                     guard let canvas = coordinator.canvasView else { return }
                     coordinator.applyUndoableObjectsReplacement(
@@ -634,7 +703,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                     )
                 }
             }
-            canvasView.undoManager?.setActionName(actionName)
+            undoManager.setActionName(actionName)
             notifyUndoState(for: canvasView)
         }
 
@@ -788,6 +857,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         ) {
             if undoTriggerCount != lastHandledUndoTriggerCount {
                 lastHandledUndoTriggerCount = undoTriggerCount
+                textBoxUndoBridge.flushPendingEditIfNeeded()
                 if canvasView.undoManager?.canUndo == true {
                     canvasView.undoManager?.undo()
                     if canvasView.drawing != previousDrawingSnapshot {
@@ -799,6 +869,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             }
             if redoTriggerCount != lastHandledRedoTriggerCount {
                 lastHandledRedoTriggerCount = redoTriggerCount
+                textBoxUndoBridge.flushPendingEditIfNeeded()
                 if canvasView.undoManager?.canRedo == true {
                     canvasView.undoManager?.redo()
                     if canvasView.drawing != previousDrawingSnapshot {
@@ -811,7 +882,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         }
 
         private func notifyUndoState(for canvasView: PKCanvasView) {
-            let canUndo = canvasView.undoManager?.canUndo ?? false
+            let canUndo = (canvasView.undoManager?.canUndo ?? false) || textBoxUndoBridge.hasUncommittedEdit
             let canRedo = canvasView.undoManager?.canRedo ?? false
             DispatchQueue.main.async { [weak self] in
                 self?.parent.onUndoStateChanged(canUndo, canRedo)
@@ -839,6 +910,12 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
         func loadPageIfNeeded(pageID: UUID, data: Data?, objects: [PageObject]) {
             guard currentLoadedPageID != pageID, let canvasView else { return }
             let isSwitchingFromAnotherPage = (currentLoadedPageID != nil)
+            if isSwitchingFromAnotherPage {
+                // Discard any pending text-edit undo snapshot from the previous page before clearing undoManager,
+                // so late TextBoxEditorView.dismantleUIView cannot push stale undo steps onto the new page.
+                textBoxUndoBridge.discardPendingEditIfNeeded()
+                pageContainerView?.endEditing(true)
+            }
             currentLoadedPageID = pageID
             isProgrammaticDrawingUpdate = true
             isProgrammaticObjectsUpdate = true
@@ -869,6 +946,7 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
                 previousDrawingSnapshot = empty
             }
             canvasView.undoManager?.removeAllActions()
+            didRegisterObjectUndoInCurrentRunLoop = false
 
             // Preserve the user's current zoom scale across page turns, and scroll to the top of the new page
             if let scrollView {
@@ -942,8 +1020,39 @@ public struct PencilCanvasScrollView: UIViewRepresentable {
             }
         }
 
+        func shouldSingleFingerTapReceiveTouch(isInsideObjectsView: Bool, pointInPage: CGPoint) -> Bool {
+            if parent.isLassoModeActive {
+                return false
+            }
+            if parent.selectedObjectID != nil, isInsideObjectsView, let pageContainerView {
+                if pageContainerView.bounds.contains(pointInPage) || isPointOverSelectedObjectOrToolbar(pointInPage) {
+                    // While an object is selected, taps inside page bounds or over handles/toolbar
+                    // are handled by PageObjectsOverlayView (controls, handles, inline UITextView, or background tap-to-deselect).
+                    return false
+                }
+            }
+            return true
+        }
+
+        public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            if gestureRecognizer === singleFingerTapRecognizer {
+                let isInsideObjectsView: Bool
+                if let objectsView = objectsHostingController?.view, let touchView = touch.view {
+                    isInsideObjectsView = touchView.isDescendant(of: objectsView)
+                } else {
+                    isInsideObjectsView = false
+                }
+                let pointInPage = pageContainerView.map { touch.location(in: $0) } ?? .zero
+                return shouldSingleFingerTapReceiveTouch(
+                    isInsideObjectsView: isInsideObjectsView,
+                    pointInPage: pointInPage
+                )
+            }
+            return true
+        }
+
         @objc func handleSingleFingerTap(_ recognizer: UITapGestureRecognizer) {
-            guard recognizer.state == .ended, let pageContainerView else { return }
+            guard recognizer.state == .ended, !parent.isLassoModeActive, let pageContainerView else { return }
             let locationInPage = recognizer.location(in: pageContainerView)
 
             // If an object was selected, tapping empty space deselects it
@@ -1184,5 +1293,27 @@ final class CenteringScrollView: UIScrollView {
             bottom: verticalInset,
             right: horizontalInset
         )
+    }
+}
+
+/// Container view for the A4 page that forwards out-of-bounds hit-testing to the interactive `objectsView`
+/// (e.g. top-edge rotate handles sticking out above `y = 0`) when an object is selected.
+private final class PageContainerView: UIView {
+    weak var objectsView: UIView?
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if let hit = super.hitTest(point, with: event) {
+            return hit
+        }
+        if let objectsView,
+           objectsView.isUserInteractionEnabled,
+           !objectsView.isHidden,
+           objectsView.alpha > 0.01 {
+            let pointInObjects = convert(point, to: objectsView)
+            if let hit = objectsView.hitTest(pointInObjects, with: event) {
+                return hit
+            }
+        }
+        return nil
     }
 }

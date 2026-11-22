@@ -49,8 +49,10 @@ public enum PagePDFExporter {
                 // 2. Paper lines/grid
                 drawPaperPattern(input.effectivePaperType, in: pageBounds, cgContext: cgContext)
 
-                // 3. Placed PageObjects (Basic Shapes, Images, Stroke/Library objects)
-                drawPageObjects(input.page.objects, assetDataProvider: assetDataProvider, cgContext: cgContext)
+                // 3. Placed PageObjects (Basic Shapes, Images, Tables, Page Links, Text Boxes, Stroke/Library objects)
+                lightTraits.performAsCurrent {
+                    drawPageObjects(input.page.objects, assetDataProvider: assetDataProvider, cgContext: cgContext)
+                }
 
                 // 4. Ink strokes from PKDrawing
                 if let data = input.drawingData,
@@ -215,6 +217,51 @@ public enum PagePDFExporter {
                 ]
                 let titleRect = CGRect(x: 10, y: (object.height - 16) * 0.5, width: object.width - 20, height: 16)
                 (fallbackTitle as NSString).draw(in: titleRect, withAttributes: attrs)
+
+            case .textBox(let text, let style):
+                let cardPath = UIBezierPath(roundedRect: localRect, cornerRadius: TextBoxLayout.cornerRadius)
+
+                if let bgColor = style.backgroundColor {
+                    cgContext.setFillColor(bgColor.uiColor(opacity: 1.0).cgColor)
+                    cgContext.addPath(cardPath.cgPath)
+                    cgContext.fillPath()
+                }
+
+                if let borderColor = style.borderColor {
+                    let inset = TextBoxLayout.borderWidth * 0.5
+                    let borderRect = localRect.insetBy(dx: inset, dy: inset)
+                    let borderPath = UIBezierPath(
+                        roundedRect: borderRect,
+                        cornerRadius: Swift.max(0, TextBoxLayout.cornerRadius - inset)
+                    )
+                    cgContext.setStrokeColor(borderColor.uiColor(opacity: 1.0).cgColor)
+                    cgContext.setLineWidth(TextBoxLayout.borderWidth)
+                    cgContext.addPath(borderPath.cgPath)
+                    cgContext.strokePath()
+                }
+
+                if !text.isEmpty {
+                    cgContext.saveGState()
+                    cgContext.addPath(cardPath.cgPath)
+                    cgContext.clip()
+
+                    let textRect = localRect.insetBy(dx: TextBoxLayout.textPadding, dy: TextBoxLayout.textPadding)
+                    let paragraphStyle = NSMutableParagraphStyle()
+                    paragraphStyle.alignment = style.alignment.nsTextAlignment
+                    paragraphStyle.lineBreakMode = .byWordWrapping
+
+                    let attrs: [NSAttributedString.Key: Any] = [
+                        .font: style.resolvedUIFont(),
+                        .foregroundColor: style.textColor.uiColor(opacity: 1.0),
+                        .paragraphStyle: paragraphStyle
+                    ]
+                    NSAttributedString(string: text, attributes: attrs).draw(
+                        with: textRect,
+                        options: [.usesLineFragmentOrigin, .usesFontLeading],
+                        context: nil
+                    )
+                    cgContext.restoreGState()
+                }
             }
 
             cgContext.restoreGState()
